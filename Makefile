@@ -15,6 +15,6 @@ release:
 	sed -i '0,/^version = ".*"/s//version = "$(V)"/' src-tauri/Cargo.toml
 	cd src-tauri && cargo update -p log-studio-ai --offline
 	git add package.json package-lock.json src-tauri/Cargo.toml src-tauri/Cargo.lock
-	git commit -m "Versão $(V)"
+	git commit -m "Release v$(V)"
 	git tag v$(V)
 	git push origin HEAD v$(V)
