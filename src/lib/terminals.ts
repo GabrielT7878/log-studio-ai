@@ -30,6 +30,8 @@ export interface TerminalTarget {
   agent: AgentKind | "script";
   /** Comando do Script (só para agent = "script"). */
   command?: string;
+  /** Tamanho da fonte a 100% de zoom (padrão 13). */
+  fontSize?: number;
 }
 
 /** Estado de um Script: nunca rodou, rodando, terminou com 0, terminou com erro, parado pelo usuário. */
@@ -51,6 +53,10 @@ interface Session extends TerminalTarget {
   generation: number;
   running: boolean;
   state: ScriptState;
+  /** Tamanho da fonte a 100% de zoom. */
+  fontSize: number;
+  /** Último zoom do canvas aplicado. */
+  zoom: number;
 }
 
 /** Quem acompanha o estado de cada sessão (janela Script). */
@@ -113,7 +119,19 @@ function createSession(id: string, target: TerminalTarget): Session {
   const host = document.createElement("div");
   host.className = "term-host";
 
-  const session: Session = { ...target, id, term, fit, host, opened: false, generation: 0, running: false, state: IDLE };
+  const session: Session = {
+    ...target,
+    id,
+    term,
+    fit,
+    host,
+    opened: false,
+    generation: 0,
+    running: false,
+    state: IDLE,
+    fontSize: target.fontSize ?? BASE_FONT_SIZE,
+    zoom: 1,
+  };
   // Teclado → processo (inclui as respostas automáticas do xterm, ex.: posição do cursor).
   term.onData((data) => {
     if (session.running) api.ptyWrite(id, data).catch(() => undefined);
@@ -163,9 +181,24 @@ function fitSession(s: Session) {
   if (s.running) api.ptyResize(s.id, cols, rows).catch(() => undefined);
 }
 
+/** Fonte na tela = tamanho do terminal (a 100%) × zoom do canvas. */
 function applyZoom(s: Session, zoom: number) {
-  const size = Math.max(MIN_FONT_SIZE, BASE_FONT_SIZE * zoom);
+  s.zoom = zoom;
+  const size = Math.max(MIN_FONT_SIZE, s.fontSize * zoom);
   if (s.term.options.fontSize !== size) s.term.options.fontSize = size;
+}
+
+/**
+ * Muda o tamanho da fonte do terminal (Ctrl + roda). A janela não muda de tamanho:
+ * colunas/linhas são recalculadas e o processo é avisado.
+ */
+export function setFontSize(id: string, fontSize: number) {
+  const s = sessions.get(id);
+  if (!s || s.fontSize === fontSize) return;
+  s.fontSize = fontSize;
+  applyZoom(s, s.zoom);
+  // Espera o xterm medir a fonte nova antes de recalcular colunas/linhas.
+  requestAnimationFrame(() => fitSession(s));
 }
 
 /**

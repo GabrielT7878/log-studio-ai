@@ -1,9 +1,20 @@
 import { CircleDot, Folder, SquareTerminal } from "lucide-react";
 import { FullscreenButton } from "./FullscreenButton";
 import { useEffect, useLayoutEffect, useRef } from "react";
-import { AGENTS, NODE_MIN_H, NODE_MIN_W, type NodePatch, type TerminalNodeData } from "../lib/canvasNodes";
+import {
+  AGENTS,
+  NODE_MIN_H,
+  NODE_MIN_W,
+  TERM_FONT_MAX,
+  TERM_FONT_MIN,
+  type NodePatch,
+  type TerminalNodeData,
+} from "../lib/canvasNodes";
 import { dragPointer } from "../lib/dragPointer";
 import * as terminals from "../lib/terminals";
+
+/** px de roda acumulados para mudar 1 ponto da fonte (igual à nota). */
+const WHEEL_STEP = 60;
 
 interface Props {
   node: TerminalNodeData;
@@ -47,13 +58,42 @@ export function TerminalNode({
   useLayoutEffect(() => {
     const body = bodyRef.current;
     if (!body) return;
-    terminals.attach(node.id, body, { space, project: projectId, agent: node.agent }, zoom);
+    terminals.attach(node.id, body, { space, project: projectId, agent: node.agent, fontSize: node.fontSize }, zoom);
     return () => terminals.detach(node.id);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- só ao montar/desmontar o card
   }, [node.id]);
 
   // Fonte acompanha o zoom (colunas/linhas não mudam).
   useEffect(() => terminals.setZoom(node.id, zoom), [node.id, zoom]);
+
+  // Tamanho da fonte do terminal (Ctrl + roda): colunas/linhas mudam.
+  useEffect(() => terminals.setFontSize(node.id, node.fontSize), [node.id, node.fontSize]);
+
+  // Ctrl + roda (ou pinça) num terminal SELECIONADO → muda o tamanho da fonte dele.
+  // Em captura: passa na frente do xterm (que usaria a roda para rolar o histórico).
+  // Não selecionado: o evento segue para o canvas (zoom).
+  const rootRef = useRef<HTMLDivElement>(null);
+  const latest = useRef({ fontSize: node.fontSize, onChange, selected });
+  latest.current = { fontSize: node.fontSize, onChange, selected };
+  useEffect(() => {
+    const el = rootRef.current;
+    if (!el) return;
+    let acc = 0;
+    const onWheel = (e: WheelEvent) => {
+      if (!e.ctrlKey || !latest.current.selected) return;
+      e.preventDefault();
+      e.stopPropagation();
+      acc += e.deltaMode === 1 ? e.deltaY * 33 : e.deltaY;
+      if (Math.abs(acc) < WHEEL_STEP) return;
+      const step = acc < 0 ? 1 : -1; // roda para cima aumenta
+      acc = 0;
+      const { fontSize, onChange: change } = latest.current;
+      const next = Math.min(TERM_FONT_MAX, Math.max(TERM_FONT_MIN, fontSize + step));
+      if (next !== fontSize) change(node.id, { fontSize: next });
+    };
+    el.addEventListener("wheel", onWheel, { passive: false, capture: true });
+    return () => el.removeEventListener("wheel", onWheel, { capture: true });
+  }, [node.id]);
 
   // Tela cheia: colunas/linhas acompanham o tamanho (ao entrar, ao sair e se o app mudar de tamanho).
   const wasFullscreen = useRef(fullscreen);
@@ -94,6 +134,7 @@ export function TerminalNode({
 
   return (
     <div
+      ref={rootRef}
       className={`canvas-node term-node${selected ? " selected" : ""}${fullscreen ? " fullscreen" : ""}`}
       data-node-id={node.id}
       style={
