@@ -26,8 +26,20 @@ const THEME = {
 export interface TerminalTarget {
   space: string;
   project: string;
-  agent: AgentKind;
+  /** "script" = janela Script (roda `command` e termina). */
+  agent: AgentKind | "script";
+  /** Comando do Script (só para agent = "script"). */
+  command?: string;
 }
+
+/** Estado de um Script: nunca rodou, rodando, terminou com 0, terminou com erro, parado pelo usuário. */
+export type ScriptStatus = "idle" | "running" | "ok" | "error" | "stopped";
+export interface ScriptState {
+  status: ScriptStatus;
+  /** Código de saída do último fim (null = desconhecido ou não terminou). */
+  code: number | null;
+}
+const IDLE: ScriptState = { status: "idle", code: null };
 
 interface Session extends TerminalTarget {
   id: string;
@@ -38,6 +50,15 @@ interface Session extends TerminalTarget {
   /** Incrementa a cada início; eventos de uma geração antiga são ignorados. */
   generation: number;
   running: boolean;
+  state: ScriptState;
+}
+
+/** Quem acompanha o estado de cada sessão (janela Script). */
+const listeners = new Map<string, Set<() => void>>();
+
+function setState(s: Session, state: ScriptState) {
+  s.state = state;
+  listeners.get(s.id)?.forEach((fn) => fn());
 }
 
 const sessions = new Map<string, Session>();
@@ -92,7 +113,7 @@ function createSession(id: string, target: TerminalTarget): Session {
   const host = document.createElement("div");
   host.className = "term-host";
 
-  const session: Session = { ...target, id, term, fit, host, opened: false, generation: 0, running: false };
+  const session: Session = { ...target, id, term, fit, host, opened: false, generation: 0, running: false, state: IDLE };
   // Teclado → processo (inclui as respostas automáticas do xterm, ex.: posição do cursor).
   term.onData((data) => {
     if (session.running) api.ptyWrite(id, data).catch(() => undefined);
@@ -105,6 +126,7 @@ async function start(s: Session) {
   // Marca a nova geração antes de qualquer espera: evita iniciar duas vezes.
   const generation = ++s.generation;
   s.running = true;
+  setState(s, { status: "running", code: null });
   await ready;
   if (s.generation !== generation) return; // excluído/reiniciado enquanto esperava
   const channel = new Channel<PtyEvent>();
@@ -116,14 +138,16 @@ async function start(s: Session) {
       s.running = false;
       const code = ev.code == null ? "" : ` (código ${ev.code})`;
       s.term.write(`\r\n\x1b[90m[processo encerrado${code}]\x1b[0m\r\n`);
+      setState(s, { status: ev.code === 0 ? "ok" : "error", code: ev.code });
     }
   };
   try {
-    await api.ptySpawn(s.id, s.space, s.project, s.agent, s.term.cols, s.term.rows, channel);
+    await api.ptySpawn(s.id, s.space, s.project, s.agent, s.term.cols, s.term.rows, channel, s.command);
   } catch (e) {
     if (s.generation !== generation) return;
     s.running = false;
     s.term.write(`\r\n\x1b[31m${String(e)}\x1b[0m\r\n`);
+    setState(s, { status: "error", code: null });
   }
 }
 
@@ -144,8 +168,11 @@ function applyZoom(s: Session, zoom: number) {
   if (s.term.options.fontSize !== size) s.term.options.fontSize = size;
 }
 
-/** Mostra o terminal `id` dentro de `container` (cria e inicia na primeira vez). */
-export function attach(id: string, container: HTMLElement, target: TerminalTarget, zoom: number) {
+/**
+ * Mostra o terminal `id` dentro de `container` (cria e inicia na primeira vez).
+ * `autoStart` = false (Script): só cria/mostra; o processo inicia com `run`.
+ */
+export function attach(id: string, container: HTMLElement, target: TerminalTarget, zoom: number, autoStart = true) {
   const s = sessions.get(id) ?? createSession(id, target);
   container.appendChild(s.host);
   applyZoom(s, zoom);
@@ -156,7 +183,7 @@ export function attach(id: string, container: HTMLElement, target: TerminalTarge
   // Espera o layout para medir o tamanho real.
   requestAnimationFrame(() => {
     fitSession(s);
-    if (s.generation === 0) void start(s);
+    if (s.generation === 0 && autoStart) void start(s);
     else s.term.refresh(0, s.term.rows - 1);
   });
 }
@@ -198,4 +225,61 @@ export function kill(id: string) {
   s.term.dispose();
   s.host.remove();
   sessions.delete(id);
+  listeners.delete(id);
+}
+
+// ---------------- Script ----------------
+
+/** Roda (ou roda de novo) o Script com o comando atual; limpa os logs. */
+export function run(id: string, target: TerminalTarget) {
+  const s = sessions.get(id) ?? createSession(id, target);
+  s.command = target.command;
+  s.space = target.space;
+  s.project = target.project;
+  s.term.reset();
+  fitSession(s);
+  void start(s);
+}
+
+/** Para o processo do Script (os logs ficam). */
+export function stop(id: string) {
+  const s = sessions.get(id);
+  if (!s || !s.running) return;
+  s.generation++; // ignora o "exit" do processo encerrado
+  s.running = false;
+  api.ptyKill(id).catch(() => undefined);
+  s.term.write("\r\n\x1b[90m[parado]\x1b[0m\r\n");
+  setState(s, { status: "stopped", code: null });
+}
+
+export function scriptState(id: string): ScriptState {
+  return sessions.get(id)?.state ?? IDLE;
+}
+
+/** Avisa quando o estado do Script muda. Devolve a função para parar de ouvir. */
+export function onScriptState(id: string, fn: () => void) {
+  let set = listeners.get(id);
+  if (!set) listeners.set(id, (set = new Set()));
+  set.add(fn);
+  return () => {
+    set.delete(fn);
+  };
+}
+
+/** Últimas `n` linhas da saída (texto puro, sem cores). */
+export function readLines(id: string, n: number): string[] {
+  const s = sessions.get(id);
+  if (!s) return [];
+  const buf = s.term.buffer.active;
+  const lines: string[] = [];
+  for (let i = 0; i < buf.length; i++) {
+    const line = buf.getLine(i);
+    if (!line) continue;
+    const text = line.translateToString(true);
+    // Linha quebrada pela largura do terminal: junta com a anterior.
+    if (line.isWrapped && lines.length) lines[lines.length - 1] += text;
+    else lines.push(text);
+  }
+  while (lines.length && !lines[lines.length - 1].trim()) lines.pop();
+  return lines.slice(-n);
 }

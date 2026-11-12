@@ -40,10 +40,17 @@ import {
   type NodePatch,
   type NoteNodeData,
   type PortalNodeData,
+  type ScriptNodeData,
+  SCRIPT_COLLAPSED_H,
+  SCRIPT_DEFAULT_OPEN_H,
+  SCRIPT_DEFAULT_TITLE,
+  SCRIPT_DEFAULT_W,
+  SCRIPT_MAX,
   type TextFamily,
   type TextNodeData,
   type TextWeight,
 } from "./canvasNodes";
+import type { ScriptState } from "./terminals";
 
 /** Pedido vindo do Rust (evento "agent-request"). */
 export interface AgentRequest {
@@ -100,6 +107,13 @@ export interface ToolDeps {
     dx: number,
     dy: number,
   ) => Promise<{ moved: string[]; missing: string[]; overlapping: string[]; revert: () => void }>;
+  /** Roda (ou roda de novo) um Script já aprovado; devolve o estado. */
+  runScript: (node: ScriptNodeData) => ScriptState;
+  /** Para um Script; devolve o estado. */
+  stopScript: (node: ScriptNodeData) => ScriptState;
+  scriptState: (id: string) => ScriptState;
+  /** Últimas `n` linhas da saída do Script. */
+  scriptLines: (id: string, n: number) => string[];
 }
 
 /** Alteração de um elemento de quadro (board_update). */
@@ -180,6 +194,7 @@ function titleOf(n: CanvasNodeData): string {
     case "terminal":
     case "note":
     case "board":
+    case "script":
       return n.title;
     case "text":
       return clip(n.text.split("\n").find((l) => l.trim())?.trim() ?? "", 60) || "Texto";
@@ -215,6 +230,10 @@ function summary(n: CanvasNodeData, terminalId: string) {
     case "text":
       base.preview = clip(n.text);
       break;
+    case "script":
+      base.command = clip(n.command);
+      base.approved = n.approved;
+      break;
     case "portal":
       base.url = n.url;
       break;
@@ -244,6 +263,9 @@ function detail(n: CanvasNodeData, terminalId: string) {
       break;
     case "folder":
       Object.assign(out, { dir: n.dir || "", openFile: n.openFile });
+      break;
+    case "script":
+      Object.assign(out, { command: n.command, approved: n.approved, expanded: n.expanded });
       break;
     case "board":
       out.path = boardPath(n.id);
@@ -424,11 +446,19 @@ function boardNode(nodes: CanvasNodeData[], args: Record<string, unknown>): Boar
   return n;
 }
 
+/** Janela Script pelo `id` dos argumentos. */
+function scriptNode(nodes: CanvasNodeData[], args: Record<string, unknown>): ScriptNodeData {
+  const n = find(nodes, str(args, "id", 200));
+  if (n.type !== "script") throw new ToolError(`A janela "${n.id}" não é um Script (é "${n.type}").`);
+  return n;
+}
+
 /** Campos que update_window aceita em cada tipo. */
 const UPDATABLE: Record<CanvasNodeData["type"], string[]> = {
   note: ["title", "text", "color", "fontSize", "x", "y", "w", "h"],
   text: ["text", "color", "fontSize", "x", "y"],
   terminal: ["title", "x", "y", "w", "h"],
+  script: ["title", "command", "x", "y", "w"],
   board: ["title", "x", "y", "w", "h"],
   portal: ["url", "x", "y", "w", "h"],
   folder: ["x", "y", "w", "h"],
@@ -460,6 +490,14 @@ function updatePatch(n: CanvasNodeData, args: Record<string, unknown>): NodePatc
   } else {
     if (w !== undefined) patch.w = Math.max(min.w, w);
     if (h !== undefined) patch.h = Math.max(min.h, h);
+  }
+
+  const command = str(args, "command", SCRIPT_MAX);
+  if (command !== undefined && n.type === "script") {
+    if (!command.trim()) throw new ToolError(`"command" não pode ficar vazio.`);
+    patch.command = command.trim();
+    // Comando mudado por agente: o usuário precisa aprovar de novo.
+    if (patch.command !== n.command) patch.approved = false;
   }
 
   const title = str(args, "title", 200);
@@ -631,6 +669,76 @@ export async function runTool(
         h,
       };
       return created(node, terminalId, `abriu a pasta "${dir || "raiz do projeto"}"`);
+    }
+
+    case "create_script": {
+      const command = str(args, "command", SCRIPT_MAX)?.trim();
+      if (!command) throw new ToolError(`Informe "command" (comando do PowerShell).`);
+      const title = str(args, "title", 200)?.trim() || SCRIPT_DEFAULT_TITLE;
+      const w = SCRIPT_DEFAULT_W;
+      const node: ScriptNodeData = {
+        id: crypto.randomUUID(),
+        type: "script",
+        title,
+        command,
+        approved: false, // definido por agente: o usuário aprova antes da 1ª execução
+        expanded: false,
+        openH: SCRIPT_DEFAULT_OPEN_H,
+        ...place(ctx, args, w, SCRIPT_COLLAPSED_H),
+        w,
+        h: SCRIPT_COLLAPSED_H,
+      };
+      const out = created(node, terminalId, `criou o script "${title}"`);
+      return {
+        ...out,
+        result: {
+          ...(out.result as object),
+          note: "O script NÃO foi executado. O usuário precisa clicar em \"Aprovar e executar\" na janela; depois disso use run_script.",
+        },
+      };
+    }
+
+    case "run_script": {
+      const n = scriptNode(nodes, args);
+      const action = str(args, "action", 20);
+      if (action !== "start" && action !== "stop" && action !== "restart") {
+        throw new ToolError(`"action" deve ser start, stop ou restart.`);
+      }
+      if (action === "stop") {
+        const state = deps.stopScript(n);
+        return { result: { id: n.id, ...state }, log: `parou o script "${n.title}"`, touched: [n.id] };
+      }
+      if (!n.command.trim()) throw new ToolError(`O script "${n.title}" não tem comando. Defina com update_window.`);
+      if (!n.approved) {
+        throw new ToolError(
+          `O comando do script "${n.title}" ainda não foi aprovado. Peça ao usuário para clicar em "Aprovar e executar" na janela.`,
+        );
+      }
+      if (action === "start" && deps.scriptState(n.id).status === "running") {
+        return { result: { id: n.id, ...deps.scriptState(n.id), note: "Já estava rodando." } };
+      }
+      const state = deps.runScript(n);
+      return {
+        result: { id: n.id, ...state },
+        log: `${action === "restart" ? "reiniciou" : "iniciou"} o script "${n.title}"`,
+        touched: [n.id],
+      };
+    }
+
+    case "script_logs": {
+      const n = scriptNode(nodes, args);
+      const lines = Math.round(Math.min(1000, Math.max(1, num(args, "lines") ?? 100)));
+      const state = deps.scriptState(n.id);
+      return {
+        result: {
+          id: n.id,
+          title: n.title,
+          command: n.command,
+          approved: n.approved,
+          ...state,
+          output: deps.scriptLines(n.id, lines).join("\n"),
+        },
+      };
     }
 
     case "create_board": {
