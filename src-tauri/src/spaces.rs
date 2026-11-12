@@ -181,7 +181,7 @@ pub fn delete(root: &Path, name: &str) -> Res<SpacesInfo> {
     if spaces.len() <= 1 {
         return Err("Não é possível excluir o único espaço de trabalho.".into());
     }
-    trash::delete(root.join(name)).map_err(|e| format!("Não foi possível mover para a Lixeira: {e}"))?;
+    crate::workspace::trash_dir(&root.join(name))?;
 
     reg.order.retain(|s| s != name);
     if reg.last.as_deref() == Some(name) {

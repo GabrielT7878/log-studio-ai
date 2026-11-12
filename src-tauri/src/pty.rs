@@ -92,6 +92,8 @@ struct Session {
     master: Box<dyn MasterPty + Send>,
     writer: Box<dyn Write + Send>,
     killer: Box<dyn ChildKiller + Send + Sync>,
+    /// Diretório em que o processo roda (o Windows não deixa excluir/mover uma pasta em uso).
+    cwd: std::path::PathBuf,
 }
 
 #[derive(Default)]
@@ -180,6 +182,7 @@ impl PtyManager {
                 master: pair.master,
                 writer,
                 killer: child.clone_killer(),
+                cwd: cwd.to_path_buf(),
             },
         );
 
@@ -246,6 +249,27 @@ impl PtyManager {
         if let Some(mut session) = lock(&self.sessions).remove(id) {
             let _ = session.killer.kill();
         }
+    }
+
+    /// Encerra os terminais que rodam em `dir` ou dentro dele (antes de mandar a pasta para a
+    /// Lixeira). Devolve os ids encerrados.
+    pub fn kill_under(&self, dir: &Path) -> Vec<String> {
+        let drained: Vec<(String, Session)> = {
+            let mut map = lock(&self.sessions);
+            let ids: Vec<String> = map
+                .iter()
+                .filter(|(_, s)| s.cwd.starts_with(dir))
+                .map(|(id, _)| id.clone())
+                .collect();
+            ids.into_iter().filter_map(|id| map.remove(&id).map(|s| (id, s))).collect()
+        };
+        drained
+            .into_iter()
+            .map(|(id, mut session)| {
+                let _ = session.killer.kill();
+                id
+            })
+            .collect()
     }
 
     pub fn kill_all(&self) {

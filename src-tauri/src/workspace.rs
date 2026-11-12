@@ -419,12 +419,42 @@ pub fn rename(root: &Path, id: &str, new_name: &str) -> Res<Vec<Node>> {
     Ok(nodes)
 }
 
+/// Manda uma pasta para a Lixeira. Se ela estiver em uso (o Windows demora alguns ms para
+/// soltar a pasta depois que um processo que rodava nela termina), tenta de novo algumas vezes.
+pub fn trash_dir(path: &Path) -> Res<()> {
+    const ATTEMPTS: u32 = 5;
+    let mut last = String::new();
+    for attempt in 1..=ATTEMPTS {
+        match trash::delete(path) {
+            Ok(()) => return Ok(()),
+            Err(e) => last = e.to_string(),
+        }
+        if !path.exists() {
+            return Ok(());
+        }
+        if attempt < ATTEMPTS {
+            std::thread::sleep(std::time::Duration::from_millis(200));
+        }
+    }
+    if is_in_use(&last) {
+        Err("A pasta está em uso por outro programa (Explorer, editor, terminal…). Feche-o e tente de novo.".into())
+    } else {
+        Err(format!("Não foi possível mover para a Lixeira: {last}"))
+    }
+}
+
+/// Erro do Windows "em uso por outro processo" (0x80270028 / 0x80070020).
+fn is_in_use(msg: &str) -> bool {
+    let m = msg.to_lowercase();
+    m.contains("0x80270028") || m.contains("0x80070020") || m.contains("in use") || m.contains("em uso")
+}
+
 /// Move o diretório do item para a Lixeira.
 pub fn delete(root: &Path, id: &str) -> Res<Vec<Node>> {
     let mut nodes = load(root)?;
     find(&nodes, id).ok_or("Item não encontrado.")?;
     let path = abs_path(root, id);
-    trash::delete(&path).map_err(|e| format!("Não foi possível mover para a Lixeira: {e}"))?;
+    trash_dir(&path)?;
 
     remove(&mut nodes, id);
     assign_ids(&mut nodes, "");

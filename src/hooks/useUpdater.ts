@@ -7,6 +7,8 @@ import { check, type Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 
 const CHECK_EVERY_MS = 6 * 60 * 60 * 1000;
+/** Identifier da versão publicada (src-tauri/tauri.conf.json). */
+const RELEASE_IDENTIFIER = "com.logstudio.ai";
 
 export type UpdaterState =
   | { phase: "idle" }
@@ -40,10 +42,10 @@ export function useUpdater() {
     let timer: number | undefined;
     let cancelled = false;
     (async () => {
-      // Versão de desenvolvimento nunca se atualiza.
+      // Só a versão instalada se atualiza (dev e build de testes e2e têm outro identifier).
       if (import.meta.env.DEV) return;
       const id = await getIdentifier().catch(() => "");
-      if (cancelled || id.endsWith(".dev")) return;
+      if (cancelled || id !== RELEASE_IDENTIFIER) return;
       void checkNow();
       timer = window.setInterval(() => void checkNow(), CHECK_EVERY_MS);
     })();

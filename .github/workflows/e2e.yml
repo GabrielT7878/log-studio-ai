@@ -1,0 +1,56 @@
+# Testes e2e: compila o build de testes do app e roda os testes do Playwright (via CDP do
+# WebView2) contra o app de verdade. Em caso de falha, publica prints, traces e o relatório.
+name: E2E
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          key: e2e
+
+      - run: npm ci
+
+      - name: Testes do Rust
+        working-directory: src-tauri
+        run: cargo test
+
+      - name: Build de testes do app
+        run: npm run e2e:build
+
+      - name: Testes e2e
+        run: npm run e2e
+        env:
+          CI: "true"
+
+      - name: Resultados (em caso de falha)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-resultados
+          path: |
+            test-results/
+            playwright-report/
+          retention-days: 14

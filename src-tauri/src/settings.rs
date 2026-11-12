@@ -31,14 +31,19 @@ pub fn default_projects_root(app: &AppHandle) -> PathBuf {
 }
 
 /// Lê as configurações; usa o padrão se o arquivo não existir ou estiver inválido.
+/// `LOGSTUDIO_PROJECTS_ROOT` (testes e2e) substitui a pasta de projetos.
 pub fn load(app: &AppHandle) -> Settings {
-    settings_file(app)
+    let mut settings = settings_file(app)
         .ok()
         .and_then(|file| fs::read_to_string(file).ok())
         .and_then(|json| serde_json::from_str::<Settings>(&json).ok())
         .unwrap_or_else(|| Settings {
             projects_root: default_projects_root(app),
-        })
+        });
+    if let Some(root) = std::env::var_os("LOGSTUDIO_PROJECTS_ROOT").filter(|r| !r.is_empty()) {
+        settings.projects_root = PathBuf::from(root);
+    }
+    settings
 }
 
 pub fn save(app: &AppHandle, settings: &Settings) -> Result<(), String> {

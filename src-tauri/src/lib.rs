@@ -106,8 +106,26 @@ fn rename_space(state: State<'_, AppState>, old_name: String, new_name: String) 
 }
 
 #[tauri::command(async)]
-fn delete_space(state: State<'_, AppState>, name: String) -> CmdResult<SpacesInfo> {
-    with_root(&state, |root| spaces::delete(root, &name))
+fn delete_space(
+    state: State<'_, AppState>,
+    ptys: State<'_, PtyManager>,
+    bridge: State<'_, BridgeState>,
+    name: String,
+) -> CmdResult<SpacesInfo> {
+    with_root(&state, |root| {
+        // Terminais rodando dentro do espaço seguram a pasta (o Windows não deixa movê-la).
+        stop_terminals_under(&ptys, &bridge, &spaces::dir_of(root, &name)?);
+        spaces::delete(root, &name)
+    })
+}
+
+/// Encerra os terminais com cwd em `dir` (ou dentro) e os desliga da ponte do agente.
+fn stop_terminals_under(ptys: &PtyManager, bridge: &BridgeState, dir: &Path) {
+    for id in ptys.kill_under(dir) {
+        if let Some(b) = bridge.0.as_ref() {
+            b.unregister(&id);
+        }
+    }
 }
 
 // ---------------- Árvore de pastas/projetos (dentro de um espaço) ----------------
@@ -135,8 +153,17 @@ fn rename_node(state: State<'_, AppState>, space: String, id: String, name: Stri
 }
 
 #[tauri::command(async)]
-fn delete_node(state: State<'_, AppState>, space: String, id: String) -> CmdResult<Vec<Node>> {
-    with_space(&state, &space, |dir| workspace::delete(dir, &id))
+fn delete_node(
+    state: State<'_, AppState>,
+    ptys: State<'_, PtyManager>,
+    bridge: State<'_, BridgeState>,
+    space: String,
+    id: String,
+) -> CmdResult<Vec<Node>> {
+    with_space(&state, &space, |dir| {
+        stop_terminals_under(&ptys, &bridge, &workspace::path_of(dir, &id)?);
+        workspace::delete(dir, &id)
+    })
 }
 
 #[tauri::command(async)]

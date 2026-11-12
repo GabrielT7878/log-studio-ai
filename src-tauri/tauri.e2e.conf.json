@@ -1,0 +1,25 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Log Studio AI (E2E)",
+  "identifier": "com.logstudio.ai.e2e",
+  "app": {
+    "windows": [
+      {
+        "title": "Log Studio AI (E2E)",
+        "width": 1440,
+        "height": 900,
+        "decorations": false
+      }
+    ]
+  },
+  "bundle": {
+    "createUpdaterArtifacts": false,
+    "icon": [
+      "icons-dev/32x32.png",
+      "icons-dev/128x128.png",
+      "icons-dev/128x128@2x.png",
+      "icons-dev/icon.icns",
+      "icons-dev/icon.ico"
+    ]
+  }
+}
