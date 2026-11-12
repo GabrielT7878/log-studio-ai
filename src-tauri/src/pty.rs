@@ -1,8 +1,10 @@
 //! Terminais de verdade (ConPTY no Windows) para os cards do canvas.
 //!
 //! - Cada sessão tem um `id` (o id do card no frontend).
-//! - O comando é escolhido aqui a partir de uma lista fixa (`Agent`); o frontend
-//!   nunca manda um comando arbitrário.
+//! - O programa é escolhido aqui a partir de uma lista fixa (`Agent`). A exceção é
+//!   `Agent::Script`: a janela Script do canvas roda um comando definido pelo usuário (ou
+//!   pelo agente, com aprovação do usuário no frontend). O terminal PowerShell já aceita
+//!   qualquer texto digitado (`write`), então isso não abre uma capacidade nova.
 //! - A saída vai para o frontend por um `Channel`, em texto UTF-8 (sequências
 //!   quebradas entre leituras são remontadas).
 //! - Reiniciar = iniciar de novo com o mesmo id (a sessão antiga é encerrada).
@@ -25,20 +27,38 @@ pub enum PtyEvent {
     Exit { code: Option<u32> },
 }
 
-/// O que roda no terminal (lista fixa).
-#[derive(Clone, Copy, Debug)]
+/// Tamanho máximo do comando de um Script.
+pub const SCRIPT_MAX: usize = 4000;
+
+/// O que roda no terminal.
+#[derive(Clone, Debug)]
 pub enum Agent {
     Shell,
     Claude,
     Codex,
+    /// Comando do PowerShell (janela Script); o processo termina com o comando.
+    Script(String),
 }
 
 impl Agent {
-    pub fn parse(s: &str) -> Res<Self> {
+    pub fn parse(s: &str, command: Option<String>) -> Res<Self> {
         match s {
             "shell" => Ok(Agent::Shell),
             "claude" => Ok(Agent::Claude),
             "codex" => Ok(Agent::Codex),
+            "script" => {
+                let cmd = command.unwrap_or_default();
+                if cmd.trim().is_empty() {
+                    return Err("O script não tem comando.".into());
+                }
+                if cmd.chars().count() > SCRIPT_MAX {
+                    return Err(format!("O comando passa do limite de {SCRIPT_MAX} caracteres."));
+                }
+                if cmd.contains('\0') {
+                    return Err("O comando tem um caractere inválido.".into());
+                }
+                Ok(Agent::Script(cmd))
+            }
             _ => Err(format!("Tipo de terminal desconhecido: {s}")),
         }
     }
@@ -58,10 +78,19 @@ fn ps_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "''"))
 }
 
-fn command_for(agent: Agent, cwd: &Path, link: Option<&CanvasLink>) -> CommandBuilder {
+fn command_for(agent: &Agent, cwd: &Path, link: Option<&CanvasLink>) -> CommandBuilder {
     let mut cmd = CommandBuilder::new("powershell.exe");
     cmd.arg("-NoLogo");
+    if let Agent::Script(script) = agent {
+        // Sem -NoExit: o processo termina com o comando e o código de saída vai ao frontend.
+        cmd.args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script.as_str()]);
+        cmd.cwd(cwd);
+        cmd.env("TERM", "xterm-256color");
+        cmd.env("COLORTERM", "truecolor");
+        return cmd;
+    }
     let program = match agent {
+        Agent::Script(_) => None,
         Agent::Shell => None,
         Agent::Claude => Some(match link {
             Some(l) => format!("claude --mcp-config {}", ps_quote(&l.mcp_config.to_string_lossy())),
@@ -157,7 +186,7 @@ impl PtyManager {
             .map_err(|e| format!("Não foi possível abrir o terminal: {e}"))?;
         let mut child = pair
             .slave
-            .spawn_command(command_for(agent, cwd, link.as_ref()))
+            .spawn_command(command_for(&agent, cwd, link.as_ref()))
             .map_err(|e| format!("Não foi possível iniciar o processo: {e}"))?;
         drop(pair.slave);
 
@@ -326,6 +355,49 @@ mod tests {
         assert!(output.contains("LOGSTUDIO_42"), "saída: {output}");
         assert!(exited, "não recebeu o evento de saída");
         assert!(manager.write("teste", "x").is_err(), "sessão deveria ter sido removida");
+    }
+
+    /// Script: roda o comando sem ficar no PowerShell e devolve o código de saída.
+    #[test]
+    fn script_runs_command_and_reports_exit_code() {
+        let (tx, rx) = mpsc::channel::<String>();
+        let channel: Channel<PtyEvent> = Channel::new(move |body| {
+            if let InvokeResponseBody::Json(json) = body {
+                let _ = tx.send(json);
+            }
+            Ok(())
+        });
+        let manager = PtyManager::default();
+        let agent = Agent::parse("script", Some("Write-Output LOGSTUDIO_$((40+2)); exit 3".into())).unwrap();
+        manager.spawn("script".into(), agent, &std::env::temp_dir(), 100, 30, channel, None).unwrap();
+        std::thread::sleep(Duration::from_millis(500));
+        let _ = manager.write("script", "\x1b[1;1R");
+
+        let mut output = String::new();
+        let mut code = None;
+        while let Ok(msg) = rx.recv_timeout(Duration::from_secs(15)) {
+            let event: serde_json::Value = serde_json::from_str(&msg).unwrap();
+            match event["type"].as_str() {
+                Some("data") => output.push_str(event["data"].as_str().unwrap_or("")),
+                Some("exit") => {
+                    code = event["code"].as_u64();
+                    break;
+                }
+                _ => {}
+            }
+        }
+        assert!(output.contains("LOGSTUDIO_42"), "saída: {output}");
+        assert_eq!(code, Some(3));
+    }
+
+    #[test]
+    fn script_command_is_validated() {
+        assert!(Agent::parse("script", None).is_err());
+        assert!(Agent::parse("script", Some("   ".into())).is_err());
+        assert!(Agent::parse("script", Some("a".repeat(SCRIPT_MAX + 1))).is_err());
+        assert!(Agent::parse("script", Some("echo\0x".into())).is_err());
+        assert!(matches!(Agent::parse("script", Some("npm run dev".into())), Ok(Agent::Script(_))));
+        assert!(Agent::parse("outro", None).is_err());
     }
 
     #[test]

@@ -36,8 +36,11 @@ import {
   RotateCw,
   Scroll,
   Square,
+  SquareCode,
   SquarePen,
   SquareTerminal,
+  ChevronUp,
+  Play,
   Trash2,
   Type,
   X,
@@ -110,6 +113,12 @@ import {
   type NodePatch,
   type NoteNodeData,
   type TerminalNodeData,
+  SCRIPT_COLLAPSED_H,
+  SCRIPT_DEFAULT_OPEN_H,
+  SCRIPT_DEFAULT_TITLE,
+  SCRIPT_DEFAULT_W,
+  SCRIPT_MIN_OPEN_H,
+  type ScriptNodeData,
 } from "../lib/canvasNodes";
 import { applyFormat, restoreSelection, type FormatKind } from "../lib/noteFormat";
 import { dragPointer } from "../lib/dragPointer";
@@ -127,16 +136,18 @@ import { NoteNode } from "./NoteNode";
 import { PortalNode } from "./PortalNode";
 import { ColorPicker, FontPicker, FontSizeStepper, HeadingMenu, NotePopover, TextColorPicker } from "./NotePopover";
 import { RingGauge } from "./RingGauge";
+import { ScriptNode, scriptStatusText, useScriptState, type ScriptAction } from "./ScriptNode";
 import { TerminalNode } from "./TerminalNode";
 import { TextNode } from "./TextNode";
 
 const appWindow = getCurrentWindow();
 
-type ToolId = "select" | "terminal" | "note" | "attach" | "folder" | "portal" | "text" | "draw";
+type ToolId = "select" | "terminal" | "script" | "note" | "attach" | "folder" | "portal" | "text" | "draw";
 
 const tools: { id: ToolId; icon: typeof MousePointer2; label: string }[] = [
   { id: "select", icon: MousePointer2, label: "Selecionar" },
   { id: "terminal", icon: SquareTerminal, label: "Terminal" },
+  { id: "script", icon: SquareCode, label: "Script" },
   { id: "note", icon: Scroll, label: "Nota" },
   { id: "attach", icon: Paperclip, label: "Anexo" },
   { id: "folder", icon: Folder, label: "Pasta" },
@@ -145,10 +156,13 @@ const tools: { id: ToolId; icon: typeof MousePointer2; label: string }[] = [
   { id: "draw", icon: Pencil, label: "Desenhar" },
 ];
 // Ferramentas que já funcionam (as outras são só visuais por enquanto).
-const WORKING_TOOLS: ToolId[] = ["select", "terminal", "note", "attach", "folder", "portal", "text", "draw"];
+const WORKING_TOOLS: ToolId[] = ["select", "terminal", "script", "note", "attach", "folder", "portal", "text", "draw"];
 // Ferramentas que criam um card desenhando um retângulo (precisam de projeto aberto).
 // "draw" cria um Quadro (Excalidraw).
-const DRAW_TOOLS: ToolId[] = ["terminal", "note", "folder", "portal", "draw"];
+const DRAW_TOOLS: ToolId[] = ["terminal", "script", "note", "folder", "portal", "draw"];
+
+/** Janelas que podem ir para tela cheia (texto solto e Script não vão). */
+const canFullscreen = (n: CanvasNodeData) => n.type !== "text" && n.type !== "script";
 
 /** Projeto aberto no canvas. */
 export interface ActiveProject {
@@ -286,7 +300,7 @@ export function Canvas({
     // Usuário mexeu no canvas: guarda e salva depois de uma pausa.
     onChange: (view) => queueViewSave(view),
     // Em tela cheia o canvas fica parado (sem pan/zoom por roda ou arraste).
-    locked: () => nodesRef.current.some((n) => n.id === fullscreenRef.current && n.type !== "text"),
+    locked: () => nodesRef.current.some((n) => n.id === fullscreenRef.current && canFullscreen(n)),
   });
 
   // ---- Cards (terminais) do projeto ----
@@ -324,6 +338,8 @@ export function Canvas({
     setSelection({ ids: [id], focus: id, group: null });
   }, []);
   const [editingTitleId, setEditingTitleId] = useState<string | null>(null);
+  /** Script com o campo do comando aberto. */
+  const [editingCommandId, setEditingCommandId] = useState<string | null>(null);
   const [tool, setTool] = useState<ToolId>("select");
 
   // Trocou de projeto: salva a visão anterior, restaura a do novo e limpa a seleção.
@@ -337,6 +353,7 @@ export function Canvas({
     setFullscreenId(view.fullscreen ?? null);
     setSelectedId(null);
     setEditingTitleId(null);
+    setEditingCommandId(null);
     setFocusNoteId(null);
     setEditingTextId(null);
     setTool("select");
@@ -442,6 +459,16 @@ export function Canvas({
             return { moved, missing, overlapping, revert:() => setScene(ref, before, { notify: true, immediate: true }) };
           },
           focus: (node) => goToNode(node),
+          runScript: (node) => {
+            terminals.run(node.id, { space, project: projectId, agent: "script", command: node.command });
+            return terminals.scriptState(node.id);
+          },
+          stopScript: (node) => {
+            terminals.stop(node.id);
+            return terminals.scriptState(node.id);
+          },
+          scriptState: (id) => terminals.scriptState(id),
+          scriptLines: (id, n) => terminals.readLines(id, n),
         },
       );
       // Trocou de projeto enquanto esperava (importação/confirmação): não aplica no projeto errado.
@@ -559,7 +586,7 @@ export function Canvas({
 
   /** Encerra/apaga o que a janela usa fora do canvas (processo do terminal, arquivo da imagem). */
   const releaseNode = (node: CanvasNodeData) => {
-    if (node.type === "terminal") terminals.kill(node.id);
+    if (node.type === "terminal" || node.type === "script") terminals.kill(node.id);
     if (node.type === "image" && project) {
       api.deleteCanvasImage(project.space, project.id, node.file).catch((e) => toast.show(String(e)));
     }
@@ -687,7 +714,7 @@ export function Canvas({
             n.type as "text" | "image" | "folder" | "portal" | "attachment"
           ] ?? "Janela";
     const effects: string[] = [];
-    if (sel.some((n) => n.type === "terminal")) effects.push("o processo do terminal será encerrado");
+    if (sel.some((n) => n.type === "terminal" || n.type === "script")) effects.push("o processo do terminal será encerrado");
     if (sel.some((n) => n.type === "image" || n.type === "attachment")) effects.push("os arquivos de imagem/anexo serão apagados");
     const extra = effects.length ? ` Além disso, ${effects.join(" e ")}.` : "";
     return {
@@ -1060,10 +1087,14 @@ export function Canvas({
       const isFolder = tool === "folder";
       const isPortal = tool === "portal";
       const isBoard = tool === "draw";
-      const min = minSize(
-        isNote ? "note" : isFolder ? "folder" : isPortal ? "portal" : isBoard ? "board" : "terminal",
-      );
-      const def = isNote
+      const isScript = tool === "script";
+      // Script nasce expandido (com o campo do comando).
+      const min = isScript
+        ? { w: minSize("script").w, h: SCRIPT_MIN_OPEN_H }
+        : minSize(isNote ? "note" : isFolder ? "folder" : isPortal ? "portal" : isBoard ? "board" : "terminal");
+      const def = isScript
+        ? { w: SCRIPT_DEFAULT_W, h: SCRIPT_DEFAULT_OPEN_H }
+        : isNote
         ? { w: NOTE_DEFAULT_W, h: NOTE_DEFAULT_H }
         : isFolder
           ? { w: FOLDER_DEFAULT_W, h: FOLDER_DEFAULT_H }
@@ -1103,6 +1134,13 @@ export function Canvas({
         setTool("select");
         return;
       }
+      if (isScript) {
+        // Script: cria direto, com o campo do comando aberto.
+        setDraft(null);
+        createScript(rect);
+        setTool("select");
+        return;
+      }
       if (isBoard) {
         // Quadro: cria direto, já selecionado (pronto para desenhar).
         setDraft(null);
@@ -1132,6 +1170,82 @@ export function Canvas({
     };
     update((list) => [...list, node]);
     setSelectedId(node.id);
+  };
+
+  const createScript = (rect: ScreenRect) => {
+    const w = toWorld(rect);
+    const openH = Math.max(SCRIPT_MIN_OPEN_H, w.h);
+    const node: ScriptNodeData = {
+      id: crypto.randomUUID(),
+      type: "script",
+      title: SCRIPT_DEFAULT_TITLE,
+      command: "",
+      approved: true,
+      expanded: true,
+      openH,
+      x: w.x,
+      y: w.y,
+      w: Math.max(minSize("script").w, w.w),
+      h: openH,
+    };
+    update((list) => [...list, node]);
+    setSelectedId(node.id);
+    setEditingCommandId(node.id);
+  };
+
+  // ---- Script: executar, parar, aprovar, expandir, editar o comando ----
+  const scriptTarget = (n: ScriptNodeData) =>
+    project ? { space: project.space, project: project.id, agent: "script" as const, command: n.command } : null;
+
+  const expandPatch = (n: ScriptNodeData): NodePatch =>
+    n.expanded ? {} : { expanded: true, h: Math.max(SCRIPT_MIN_OPEN_H, n.openH) };
+
+  const scriptAction = (id: string, action: ScriptAction) => {
+    const n = nodesRef.current.find((m): m is ScriptNodeData => m.id === id && m.type === "script");
+    if (!n) return;
+    switch (action) {
+      case "run": {
+        if (!n.command.trim()) {
+          patchNode(id, expandPatch(n));
+          setEditingCommandId(id);
+          return;
+        }
+        if (!n.approved) {
+          patchNode(id, expandPatch(n)); // mostra o pedido de aprovação
+          return;
+        }
+        const target = scriptTarget(n);
+        if (target) terminals.run(id, target);
+        return;
+      }
+      case "approve": {
+        patchNode(id, { approved: true, ...expandPatch(n) });
+        const target = scriptTarget(n);
+        if (target && n.command.trim()) terminals.run(id, target);
+        return;
+      }
+      case "stop":
+        terminals.stop(id);
+        return;
+      case "expand":
+        patchNode(id, expandPatch(n));
+        return;
+      case "collapse":
+        if (editingCommandId === id) setEditingCommandId(null);
+        patchNode(id, { expanded: false, openH: n.h, h: SCRIPT_COLLAPSED_H });
+        return;
+      case "edit":
+        patchNode(id, expandPatch(n));
+        setEditingCommandId(id);
+        return;
+    }
+  };
+
+  /** Fim da edição do comando: o que o usuário salva já fica aprovado. */
+  const finishCommand = (id: string, command: string | null) => {
+    setEditingCommandId(null);
+    if (command === null) return;
+    patchNode(id, { command: command.trim(), approved: true });
   };
 
   const createPortal = (rect: ScreenRect) => {
@@ -1357,7 +1471,7 @@ export function Canvas({
   }, [windowsOpen]);
   /** Nome mostrado na lista para cada janela. */
   const windowLabel = (n: CanvasNodeData) => {
-    if (n.type === "terminal" || n.type === "note") return n.title;
+    if (n.type === "terminal" || n.type === "note" || n.type === "script") return n.title;
     if (n.type === "image") return "Imagem";
     if (n.type === "attachment") return n.name;
     if (n.type === "portal") {
@@ -1379,6 +1493,7 @@ export function Canvas({
       return n.agent === "shell" ? <SquareTerminal size={14} color={color} /> : <CircleDot size={14} color={color} />;
     }
     if (n.type === "note") return <Scroll size={14} />;
+    if (n.type === "script") return <SquareCode size={14} />;
     if (n.type === "image") return <Image size={14} />;
     if (n.type === "attachment") return <Paperclip size={14} />;
     if (n.type === "portal") return <Globe size={14} />;
@@ -1414,7 +1529,7 @@ export function Canvas({
   /** Seleciona a janela e leva a visualização até ela, centralizada. */
   // ---- Tela cheia de uma janela ----
   /** Janela em tela cheia, se ainda existir no projeto (texto solto não entra). */
-  const fsNode = fullscreenId ? (nodes.find((n) => n.id === fullscreenId && n.type !== "text") ?? null) : null;
+  const fsNode = fullscreenId ? (nodes.find((n) => n.id === fullscreenId && canFullscreen(n)) ?? null) : null;
 
   /** Entra/sai da tela cheia e salva junto com a visão do projeto. */
   const setFullscreen = (id: string | null) => {
@@ -1441,7 +1556,7 @@ export function Canvas({
 
   /** Janelas que podem ir para tela cheia (ordem da lista) e a que está agora (se houver). */
   const fullscreenState = () => {
-    const list = nodesRef.current.filter((n) => n.type !== "text");
+    const list = nodesRef.current.filter(canFullscreen);
     const active = list.some((n) => n.id === fullscreenRef.current) ? fullscreenRef.current : null;
     return { list, active };
   };
@@ -1684,6 +1799,31 @@ export function Canvas({
   }, [usageOpen]);
 
   const selectedNode = nodes.find((n) => n.id === selectedId) ?? null;
+  // Status do Script selecionado (o botão Executar/Parar da barra acompanha).
+  const selectedScriptState = useScriptState(selectedNode?.type === "script" ? selectedNode.id : null);
+
+  const scriptActions = (s: ScriptNodeData): NodeAction[][] => {
+    const running = selectedScriptState.status === "running";
+    return [
+      [
+        { label: "Status", display: true, content: scriptStatusText(selectedScriptState) },
+      ],
+      [
+        { icon: SquarePen, label: "Renomear", onClick: () => setEditingTitleId(s.id) },
+        { icon: Code, label: "Editar comando", onClick: () => scriptAction(s.id, "edit") },
+      ],
+      [
+        running
+          ? { icon: Square, label: "Parar", onClick: () => scriptAction(s.id, "stop") }
+          : { icon: Play, label: s.approved ? "Executar" : "Revisar e aprovar", onClick: () => scriptAction(s.id, "run") },
+        { icon: RotateCw, label: "Reiniciar", onClick: () => scriptAction(s.id, "run") },
+        s.expanded
+          ? { icon: ChevronUp, label: "Recolher", onClick: () => scriptAction(s.id, "collapse") }
+          : { icon: ChevronDown, label: "Expandir (logs)", onClick: () => scriptAction(s.id, "expand") },
+      ],
+      [{ icon: Trash2, label: "Excluir", onClick: () => deleteNode(s) }],
+    ];
+  };
 
   return (
     <main
@@ -1697,7 +1837,7 @@ export function Canvas({
         if (fsNode) return; // em tela cheia não há o que centralizar
         const target = e.target as HTMLElement;
         if (target.closest("button, input, textarea, select, a")) return;
-        if (!target.closest(".term-header, .note-header, .fb-header, .pt-header, .at-header, .bd-header")) return;
+        if (!target.closest(".term-header, .note-header, .fb-header, .pt-header, .at-header, .bd-header, .sc-bar")) return;
         const id = target.closest<HTMLElement>(".canvas-node")?.dataset.nodeId;
         const n = id ? nodesRef.current.find((x) => x.id === id) : undefined;
         if (n) goToNode(n);
@@ -1731,7 +1871,23 @@ export function Canvas({
 
         {project &&
           nodes.map((n) =>
-            n.type === "board" ? (
+            n.type === "script" ? (
+              <ScriptNode
+                key={n.id}
+                node={n}
+                space={project.space}
+                projectId={project.id}
+                zoom={pan.zoom}
+                selected={selection.ids.includes(n.id)}
+                editingTitle={n.id === editingTitleId}
+                editingCommand={n.id === editingCommandId}
+                onSelect={selectNode}
+                onChange={changeNode}
+                onTitleDone={finishTitle}
+                onCommandDone={finishCommand}
+                onAction={scriptAction}
+              />
+            ) : n.type === "board" ? (
               <BoardNode
                 key={n.id}
                 node={n}
@@ -1976,6 +2132,8 @@ export function Canvas({
         <div className="toolbar node-toolbar" key={selectedNode.type}>
           {(selectedNode.type === "note"
             ? noteActions(selectedNode)
+            : selectedNode.type === "script"
+              ? scriptActions(selectedNode)
             : selectedNode.type === "text"
               ? textActions(selectedNode)
               : selectedNode.type === "image" ||

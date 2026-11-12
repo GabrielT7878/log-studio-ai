@@ -241,9 +241,11 @@ fn pty_spawn(
     agent: String,
     cols: u16,
     rows: u16,
+    command: Option<String>,
     on_event: Channel<PtyEvent>,
 ) -> CmdResult<()> {
-    let agent = Agent::parse(&agent)?;
+    // `command` só vale para agent = "script" (janela Script do canvas).
+    let agent = Agent::parse(&agent, command)?;
     // O diretório vem da árvore real do espaço (nunca de um caminho enviado pelo frontend).
     let cwd = with_space(&state, &space, |dir| workspace::path_of(dir, &project))?;
     // Claude Code: liga o agente ao canvas do projeto (ferramentas MCP).

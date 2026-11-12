@@ -152,7 +152,32 @@ export interface BoardNodeData {
   h: number;
 }
 
+/**
+ * Script: botão que roda um comando do PowerShell na pasta do projeto. Recolhido mostra só
+ * o botão com o status; expandido mostra os logs (xterm). O status vive em `terminals.ts`.
+ */
+export interface ScriptNodeData {
+  id: string;
+  type: "script";
+  /** Janelas conectadas compartilham o mesmo id de grupo (movem juntas). */
+  group?: string;
+  title: string;
+  /** Comando do PowerShell ("" = ainda não configurado). */
+  command: string;
+  /** false = comando definido/alterado por um agente: o usuário precisa aprovar antes de rodar. */
+  approved: boolean;
+  /** true = mostra os logs. */
+  expanded: boolean;
+  /** Altura de quando está expandido (recolhido, `h` = SCRIPT_COLLAPSED_H). */
+  openH: number;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
 export type CanvasNodeData =
+  | ScriptNodeData
   | BoardNodeData
   | AttachmentNodeData
   | TerminalNodeData
@@ -170,7 +195,8 @@ export type NodePatch = Partial<Omit<TerminalNodeData, "id" | "type">> &
   Partial<Omit<FolderNodeData, "id" | "type">> &
   Partial<Omit<PortalNodeData, "id" | "type">> &
   Partial<Omit<AttachmentNodeData, "id" | "type">> &
-  Partial<Omit<BoardNodeData, "id" | "type">>;
+  Partial<Omit<BoardNodeData, "id" | "type">> &
+  Partial<Omit<ScriptNodeData, "id" | "type">>;
 
 export const AGENTS: Record<AgentKind, { title: string; color: string }> = {
   shell: { title: "PowerShell", color: "#9a9a9e" },
@@ -318,6 +344,16 @@ export const BOARD_DEFAULT_W = 900;
 export const BOARD_DEFAULT_H = 600;
 export const BOARD_DEFAULT_TITLE = "Quadro";
 
+// Script
+export const SCRIPT_MIN_W = 220;
+export const SCRIPT_DEFAULT_W = 420;
+export const SCRIPT_COLLAPSED_H = 56;
+export const SCRIPT_MIN_OPEN_H = 200;
+export const SCRIPT_DEFAULT_OPEN_H = 320;
+export const SCRIPT_DEFAULT_TITLE = "Script";
+/** Igual ao limite do backend (pty.rs). */
+export const SCRIPT_MAX = 4000;
+
 /** Tira o grupo de quem ficou sozinho nele. */
 export function normalizeGroups(list: CanvasNodeData[]): CanvasNodeData[] {
   const count = new Map<string, number>();
@@ -331,6 +367,7 @@ export function normalizeGroups(list: CanvasNodeData[]): CanvasNodeData[] {
 
 /** Tamanho mínimo de cada tipo de card. */
 export function minSize(type: CanvasNodeData["type"]) {
+  if (type === "script") return { w: SCRIPT_MIN_W, h: SCRIPT_COLLAPSED_H };
   if (type === "board") return { w: BOARD_MIN_W, h: BOARD_MIN_H };
   if (type === "portal") return { w: PORTAL_MIN_W, h: PORTAL_MIN_H };
   if (type === "attachment") return { w: ATTACHMENT_MIN_W, h: ATTACHMENT_MIN_H };
@@ -418,6 +455,24 @@ export function sanitizeNodes(raw: unknown): CanvasNodeData[] {
           ...box,
           w: Math.max(ATTACHMENT_MIN_W, o.w),
           h: Math.max(ATTACHMENT_MIN_H, o.h),
+        },
+      ];
+    }
+    if (o.type === "script") {
+      const expanded = o.expanded === true;
+      const openH = Math.max(SCRIPT_MIN_OPEN_H, isNum(o.openH) ? o.openH : SCRIPT_DEFAULT_OPEN_H);
+      return [
+        {
+          id: o.id,
+          type: "script",
+          title: typeof o.title === "string" && o.title.trim() ? o.title.slice(0, 200) : SCRIPT_DEFAULT_TITLE,
+          command: typeof o.command === "string" ? o.command.slice(0, SCRIPT_MAX) : "",
+          approved: o.approved === true,
+          expanded,
+          openH,
+          ...box,
+          w: Math.max(SCRIPT_MIN_W, o.w),
+          h: expanded ? Math.max(SCRIPT_MIN_OPEN_H, o.h) : SCRIPT_COLLAPSED_H,
         },
       ];
     }

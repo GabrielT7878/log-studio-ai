@@ -1824,6 +1824,270 @@ html.tree-dragging * {
   background-color: transparent !important;
 }
 
+/* ---------- Script (botão que roda um comando) ---------- */
+.sc-node {
+  --sc-status: #6b6b70;
+  display: flex;
+  flex-direction: column;
+  border-radius: 10px;
+  background: #1b1b1f;
+  border: 1px solid var(--border);
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.45);
+}
+
+.sc-node.selected {
+  outline: 1.5px dashed var(--accent);
+  outline-offset: 4px;
+}
+
+.sc-node.sc-running {
+  --sc-status: #22c55e;
+  border-color: rgba(34, 197, 94, 0.45);
+}
+
+.sc-node.sc-error {
+  --sc-status: #ef4444;
+  border-color: rgba(239, 68, 68, 0.5);
+}
+
+.sc-node.sc-ok {
+  --sc-status: #9a9a9e;
+}
+
+.sc-node.pending {
+  border-color: rgba(234, 179, 8, 0.6);
+}
+
+/* Barra (escala com o zoom): é o botão inteiro quando recolhido */
+.sc-bar {
+  zoom: var(--zoom);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 54px;
+  padding: 0 10px 0 14px;
+  border-radius: 10px;
+  background: #26262a;
+  cursor: grab;
+}
+
+.sc-node.expanded .sc-bar {
+  height: 44px;
+  border-radius: 10px 10px 0 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.sc-bar:active {
+  cursor: grabbing;
+}
+
+.sc-dot {
+  flex-shrink: 0;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--sc-status);
+}
+
+.sc-node.sc-running .sc-dot {
+  box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.2);
+  animation: sc-pulse 1.6s ease-in-out infinite;
+}
+
+.sc-node.sc-error .sc-dot {
+  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.2);
+}
+
+@keyframes sc-pulse {
+  50% {
+    box-shadow: 0 0 0 5px rgba(34, 197, 94, 0.08);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sc-node.sc-running .sc-dot {
+    animation: none;
+  }
+}
+
+.sc-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sc-title {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.sc-cmd {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.sc-btn {
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.sc-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.sc-btn.sc-run {
+  background: rgba(34, 197, 94, 0.14);
+  color: #4ade80;
+}
+
+.sc-btn.sc-run:hover {
+  background: rgba(34, 197, 94, 0.24);
+}
+
+.sc-btn.sc-stop {
+  background: rgba(239, 68, 68, 0.14);
+  color: #f87171;
+}
+
+.sc-btn.sc-stop:hover {
+  background: rgba(239, 68, 68, 0.24);
+}
+
+.sc-btn.sc-approve-btn {
+  background: rgba(234, 179, 8, 0.16);
+  color: #facc15;
+}
+
+.sc-body {
+  border-radius: 0 0 10px 10px;
+}
+
+/* Campo do comando */
+.sc-editor,
+.sc-approval {
+  zoom: var(--zoom);
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+}
+
+.sc-editor-input {
+  flex: 1;
+  min-height: 0;
+  resize: none;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  outline: none;
+  background: #141417;
+  color: var(--text);
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  user-select: text;
+}
+
+.sc-editor-input:focus {
+  border-color: var(--accent);
+}
+
+.sc-editor-actions,
+.sc-approval-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sc-editor-hint {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.sc-editor-actions button,
+.sc-approval-actions button {
+  height: 28px;
+  padding: 0 12px;
+  border: none;
+  border-radius: 6px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.sc-editor-cancel,
+.sc-approval-edit {
+  background: var(--bg-input);
+  color: var(--text);
+}
+
+.sc-editor-save {
+  background: var(--accent);
+  color: #fff;
+}
+
+/* Aprovação de comando definido por agente */
+.sc-approval-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #facc15;
+}
+
+.sc-approval-cmd {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  overflow: auto;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: #141417;
+  border: 1px solid rgba(234, 179, 8, 0.35);
+  color: var(--text);
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  user-select: text;
+}
+
+.sc-approval-ok {
+  background: #ca8a04;
+  color: #fff;
+}
+
+.sc-approval-ok:hover {
+  background: #a16207;
+}
+
 /* Alça de redimensionar (canto inferior direito) */
 .node-resize {
   position: absolute;
