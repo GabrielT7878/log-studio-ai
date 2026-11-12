@@ -1,6 +1,6 @@
 [package]
 name = "log-studio-ai"
-version = "0.1.1"
+version = "0.1.2"
 description = "Canvas de janelas com terminais e agentes de IA"
 authors = ["Gabriel"]
 edition = "2024"
