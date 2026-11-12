@@ -11,18 +11,21 @@ const EXE = fileURLToPath(new URL("../src-tauri/target/debug/log-studio-ai.exe",
 
 async function waitForCdp(app: ChildProcess, timeoutMs: number) {
   const until = Date.now() + timeoutMs;
+  let last = "nenhuma resposta";
   while (Date.now() < until) {
     if (app.exitCode !== null) throw new Error(`O app fechou ao iniciar (código ${app.exitCode}).`);
     try {
       const res = await fetch(`${CDP_URL}/json/list`);
-      const pages = (await res.json()) as { type: string }[];
+      const body = await res.text();
+      last = `HTTP ${res.status}: ${body.slice(0, 300)}`;
+      const pages = JSON.parse(body) as { type: string }[];
       if (pages.some((p) => p.type === "page")) return;
-    } catch {
-      // ainda subindo
+    } catch (e) {
+      last = e instanceof Error ? `${e.message}${e.cause ? ` (${String(e.cause)})` : ""}` : String(e);
     }
     await new Promise((r) => setTimeout(r, 500));
   }
-  throw new Error(`O app não abriu a porta CDP ${CDP_PORT} em ${timeoutMs / 1000}s.`);
+  throw new Error(`O app não abriu a porta CDP ${CDP_PORT} em ${timeoutMs / 1000}s. Última tentativa: ${last}`);
 }
 
 export default async function globalSetup() {
@@ -40,7 +43,8 @@ export default async function globalSetup() {
     },
     stdio: "inherit",
   });
-  await waitForCdp(app, 60_000);
+  console.log(`[e2e] app iniciado (pid ${app.pid}), pasta de projetos: ${root}`);
+  await waitForCdp(app, 120_000);
 
   return async () => {
     app.kill();

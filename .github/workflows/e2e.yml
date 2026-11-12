@@ -30,6 +30,7 @@ jobs:
         with:
           workspaces: src-tauri -> target
           key: e2e
+          cache-on-failure: true
 
       - run: npm ci
 
@@ -44,6 +45,27 @@ jobs:
         run: npm run e2e
         env:
           CI: "true"
+
+      - name: Diagnóstico (em caso de falha)
+        if: failure()
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force test-results | Out-Null
+          "--- processos do app / WebView2"
+          Get-CimInstance Win32_Process |
+            Where-Object { $_.Name -in 'log-studio-ai.exe', 'msedgewebview2.exe' } |
+            ForEach-Object { "{0} {1} :: {2}" -f $_.ProcessId, $_.Name, ("$($_.CommandLine)".Substring(0, [Math]::Min(300, "$($_.CommandLine)".Length))) }
+          "--- porta 9333"
+          netstat -ano | Select-String ':9333'
+          "--- WebView2 Runtime"
+          Get-ItemProperty 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}' -ErrorAction SilentlyContinue | Select-Object pv
+          "--- print da tela"
+          Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+          $b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+          $bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height
+          [System.Drawing.Graphics]::FromImage($bmp).CopyFromScreen($b.Location, [System.Drawing.Point]::Empty, $b.Size)
+          $bmp.Save("test-results/tela-do-runner.png")
+          "salvo em test-results/tela-do-runner.png ($($b.Width)x$($b.Height))"
 
       - name: Resultados (em caso de falha)
         if: failure()
