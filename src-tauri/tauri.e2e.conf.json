@@ -8,7 +8,8 @@
         "title": "Log Studio AI (E2E)",
         "width": 1440,
         "height": 900,
-        "decorations": false
+        "decorations": false,
+        "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --remote-debugging-port=9333 --remote-allow-origins=*"
       }
     ]
   },

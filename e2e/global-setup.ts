@@ -66,12 +66,10 @@ export default async function globalSetup() {
   const root = mkdtempSync(join(tmpdir(), "logstudio-e2e-"));
   process.env.LOGSTUDIO_PROJECTS_ROOT = root; // os testes leem daqui
 
+  // A porta CDP vem do build de testes (additionalBrowserArgs em src-tauri/tauri.e2e.conf.json):
+  // no runner do GitHub o WebView2 ignora a variável WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS.
   const app = spawn(EXE, [], {
-    env: {
-      ...process.env,
-      LOGSTUDIO_PROJECTS_ROOT: root,
-      WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${CDP_PORT} --remote-allow-origins=*`,
-    },
+    env: { ...process.env, LOGSTUDIO_PROJECTS_ROOT: root },
     stdio: "inherit",
   });
   console.log(`[e2e] app iniciado (pid ${app.pid}), pasta de projetos: ${root}`);

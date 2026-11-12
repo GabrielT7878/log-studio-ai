@@ -129,8 +129,10 @@ Os ids de pastas/projetos são **caminhos** (`"Pasta/Projeto"`). Renomear ou mov
 ## Testes e2e
 
 - `e2e/global-setup.ts` abre `src-tauri/target/debug/log-studio-ai.exe` (gerado por
-  `npm run e2e:build`) com `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9333`
-  e uma raiz de projetos temporária; os testes conectam com `chromium.connectOverCDP`.
+  `npm run e2e:build`) com uma raiz de projetos temporária; os testes conectam com
+  `chromium.connectOverCDP` na porta 9333. A porta vem de `additionalBrowserArgs` em
+  `tauri.e2e.conf.json` (no runner do GitHub o WebView2 ignora a variável
+  `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS`). Nunca ponha essa porta nas outras configs.
 - Use os helpers de `e2e/app.ts` (`createInTree`, `deleteInTree`, `openShellTerminal`,
   `treeItem`, `spaceDir`, `unique`). Nomes únicos por teste: o app é compartilhado.
 - Ao corrigir um bug de UI, escreva o teste primeiro e confirme que ele **falha** sem a
