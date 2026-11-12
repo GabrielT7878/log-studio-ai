@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../lib/api";
+import { flushCanvas } from "./useCanvasNodes";
 import type { DropTarget } from "./useTreeDrag";
 
 // Árvore da sidebar (do espaço de trabalho selecionado). A fonte de verdade é o
@@ -88,6 +89,8 @@ export function useWorkspaceTree(
 ) {
   const [tree, setTree] = useState<TreeNode[]>([]);
   const [loaded, setLoaded] = useState(false);
+  // Espaço ao qual `tree` pertence (logo depois de trocar/renomear o espaço, ainda é o anterior).
+  const [treeSpace, setTreeSpace] = useState<string | null>(null);
   // Item cujo nome está sendo editado inline.
   const [editingId, setEditingId] = useState<string | null>(null);
 
@@ -117,6 +120,7 @@ export function useWorkspaceTree(
     attempt(space, api.loadTree(space)).then((t) => {
       if (!alive || !t) return;
       setTree(t);
+      setTreeSpace(space);
       setLoaded(true);
     });
     return () => {
@@ -155,6 +159,7 @@ export function useWorkspaceTree(
       setEditingId(null);
       const clean = name?.trim();
       if (!clean || !space) return;
+      await flushCanvas(); // o caminho do projeto aberto pode mudar
       const t = await attempt(space, api.rename(space, id, clean));
       if (t) setTree(t);
     },
@@ -177,6 +182,7 @@ export function useWorkspaceTree(
   const deleteNode = useCallback(
     async (id: string) => {
       if (!space) return;
+      await flushCanvas();
       const t = await attempt(space, api.remove(space, id));
       if (t) setTree(t);
     },
@@ -187,6 +193,7 @@ export function useWorkspaceTree(
   const moveNode = useCallback(
     async (dragId: string, target: DropTarget) => {
       if (!space) return;
+      await flushCanvas(); // o caminho do projeto aberto pode mudar
       const t = await attempt(space, api.move(space, dragId, target.id, target.pos));
       if (t) setTree(t);
     },
@@ -213,6 +220,7 @@ export function useWorkspaceTree(
 
   return {
     tree,
+    treeSpace,
     loaded,
     editingId,
     createFolder,

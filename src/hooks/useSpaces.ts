@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type SpacesInfo } from "../lib/api";
+import { flushCanvas } from "./useCanvasNodes";
 
 /**
  * Espaços de trabalho (ex.: Trabalho, Pessoal).
@@ -56,6 +57,7 @@ export function useSpaces(rootVersion: number, onError: (msg: string) => void) {
   /** Renomeia o espaço. Devolve true se deu certo. */
   const rename = useCallback(
     async (oldName: string, newName: string) => {
+      await flushCanvas(); // salva o canvas aberto antes de a pasta do espaço mudar de nome
       const info = await attempt(api.renameSpace(oldName, newName));
       if (info) apply(info);
       return !!info;
@@ -66,6 +68,7 @@ export function useSpaces(rootVersion: number, onError: (msg: string) => void) {
   /** Move o espaço para a Lixeira. */
   const remove = useCallback(
     async (name: string) => {
+      await flushCanvas();
       const info = await attempt(api.deleteSpace(name));
       if (info) apply(info);
     },

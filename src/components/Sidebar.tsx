@@ -73,6 +73,7 @@ export function Sidebar({
   const spaces = useSpaces(rootVersion, toast.show);
   const {
     tree,
+    treeSpace,
     loaded,
     editingId,
     createFolder,
@@ -92,6 +93,9 @@ export function Sidebar({
   onActiveRef.current = onActiveProjectChange;
   useEffect(() => {
     const space = spaces.current;
+    // Logo depois de trocar/renomear o espaço, `tree` ainda é a do espaço anterior (com os
+    // cards lidos quando ela carregou): espera a árvore do espaço atual chegar.
+    if (space && treeSpace !== space) return;
     onActiveRef.current(
       active && space
         ? {
@@ -105,7 +109,7 @@ export function Sidebar({
         : null,
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps -- só muda quando o projeto aberto muda
-  }, [spaces.current, active?.id, active?.name, active?.color]);
+  }, [spaces.current, treeSpace, active?.id, active?.name, active?.color]);
 
   const listRef = useRef<HTMLElement>(null);
   const drag = useTreeDrag(listRef, moveNode);

@@ -43,9 +43,11 @@ export async function createInTree(page: Page, kind: "Nova pasta" | "Novo projet
   if (parent) await treeItem(page, parent).click({ button: "right" });
   else await page.locator("aside").click({ button: "right", position: { x: 200, y: 500 } });
   await page.getByText(kind, { exact: true }).click();
-  await page.keyboard.press("Control+A");
-  await page.keyboard.type(name);
-  await page.keyboard.press("Enter");
+  // O item novo entra em modo de edição do nome: espera o campo e preenche.
+  const input = page.locator("aside input:focus");
+  await expect(input).toBeVisible();
+  await input.fill(name);
+  await input.press("Enter");
   await expect(treeItem(page, name)).toBeVisible();
 }
 
