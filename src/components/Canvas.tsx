@@ -119,6 +119,7 @@ import {
   SCRIPT_DEFAULT_W,
   SCRIPT_MIN_OPEN_H,
   type ScriptNodeData,
+  TERM_FONT_DEFAULT,
 } from "../lib/canvasNodes";
 import { applyFormat, restoreSelection, type FormatKind } from "../lib/noteFormat";
 import { dragPointer } from "../lib/dragPointer";
@@ -1163,6 +1164,7 @@ export function Canvas({
       type: "terminal",
       agent,
       title: AGENTS[agent].title,
+      fontSize: TERM_FONT_DEFAULT,
       x: w.x,
       y: w.y,
       w: Math.max(NODE_MIN_W, w.w),

@@ -10,6 +10,8 @@ export interface TerminalNodeData {
   group?: string;
   agent: AgentKind;
   title: string;
+  /** Tamanho da fonte a 100% de zoom (Ctrl + roda no terminal selecionado). */
+  fontSize: number;
   x: number;
   y: number;
   w: number;
@@ -209,6 +211,9 @@ export const NODE_MIN_W = 320;
 export const NODE_MIN_H = 200;
 export const NODE_DEFAULT_W = 720;
 export const NODE_DEFAULT_H = 460;
+export const TERM_FONT_MIN = 8;
+export const TERM_FONT_MAX = 32;
+export const TERM_FONT_DEFAULT = 13;
 
 // Nota
 /** Paleta da nota (ordem do seletor). "gray" é de versões antigas e não aparece no seletor. */
@@ -426,6 +431,10 @@ export function sanitizeNodes(raw: unknown): CanvasNodeData[] {
           type: "terminal",
           agent,
           title: typeof o.title === "string" && o.title.trim() ? o.title : AGENTS[agent].title,
+          // Terminais de antes desta opção: tamanho padrão.
+          fontSize: isNum(o.fontSize)
+            ? Math.min(TERM_FONT_MAX, Math.max(TERM_FONT_MIN, Math.round(o.fontSize)))
+            : TERM_FONT_DEFAULT,
           ...box,
           w: Math.max(NODE_MIN_W, o.w),
           h: Math.max(NODE_MIN_H, o.h),
