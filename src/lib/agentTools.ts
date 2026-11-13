@@ -202,7 +202,7 @@ function titleOf(n: CanvasNodeData): string {
     case "image":
       return "Imagem";
     case "attachment":
-      return n.name;
+      return n.title || n.name;
     case "folder":
       return n.dir || "(raiz do projeto)";
     case "portal":
@@ -464,7 +464,7 @@ const UPDATABLE: Record<CanvasNodeData["type"], string[]> = {
   board: ["title", "x", "y", "w", "h"],
   portal: ["url", "file", "x", "y", "w", "h"],
   folder: ["x", "y", "w", "h"],
-  attachment: ["x", "y", "w", "h"],
+  attachment: ["title", "x", "y", "w", "h"],
   image: ["x", "y", "w"],
 };
 

@@ -18,6 +18,7 @@ import { attachmentKind, extOf, formatBytes, parseDelimited, type AttachmentKind
 import { ATTACHMENT_MIN_H, ATTACHMENT_MIN_W, type AttachmentNodeData, type NodePatch } from "../lib/canvasNodes";
 import { dragPointer } from "../lib/dragPointer";
 import { renderMarkdown } from "../lib/markdown";
+import { TitleInput } from "./TerminalNode";
 
 interface Props {
   node: AttachmentNodeData;
@@ -25,8 +26,10 @@ interface Props {
   projectId: string;
   zoom: number;
   selected: boolean;
+  editingTitle: boolean;
   onSelect: (id: string) => void;
   onChange: (id: string, patch: NodePatch) => void;
+  onTitleDone: (id: string, title: string | null) => void;
   /** Esta janela está em tela cheia. */
   fullscreen?: boolean;
   onToggleFullscreen?: (id: string) => void;
@@ -44,7 +47,8 @@ function KindIcon({ kind, ext, size }: { kind: AttachmentKind; ext: string; size
 }
 
 /** Anexo: qualquer arquivo copiado para o projeto, com prévia conforme o tipo. */
-export function AttachmentNode({ node, space, projectId, zoom, selected, onSelect, onChange, onError, fullscreen = false, onToggleFullscreen }: Props) {
+export function AttachmentNode({ node, space, projectId, zoom, selected, editingTitle, onSelect, onChange, onTitleDone, onError, fullscreen = false, onToggleFullscreen }: Props) {
+  const title = node.title || node.name;
   const kind = attachmentKind(node.name);
   const ext = extOf(node.name);
   const [src, setSrc] = useState<string | null>(null);
@@ -122,13 +126,17 @@ export function AttachmentNode({ node, space, projectId, zoom, selected, onSelec
       onPointerDown={() => onSelect(node.id)}
     >
       <div className="at-inner">
-        <div className="at-header" onPointerDown={onHeaderDown}>
+        <div className="at-header" onPointerDown={editingTitle ? undefined : onHeaderDown}>
           <span className="at-icon at-drag">
             <KindIcon kind={kind} ext={ext} size={15} />
           </span>
-          <span className="at-name at-drag" title={node.name}>
-            {node.name}
-          </span>
+          {editingTitle ? (
+            <TitleInput value={title} onDone={(t) => onTitleDone(node.id, t)} />
+          ) : (
+            <span className="at-name at-drag" title={node.title ? `Arquivo: ${node.name}` : node.name}>
+              {title}
+            </span>
+          )}
           <span className="at-size at-drag">{formatBytes(node.size)}</span>
           {canOpen && (
             <button className="fb-icon-btn" title="Abrir no app padrão" onClick={open}>
@@ -151,7 +159,7 @@ export function AttachmentNode({ node, space, projectId, zoom, selected, onSelec
             </div>
           ) : preview ? (
             kind === "pdf" ? (
-              src && <iframe className="at-frame" src={src} title={node.name} />
+              src && <iframe className="at-frame" src={src} title={title} />
             ) : kind === "video" ? (
               src && <video className="at-video" src={src} controls preload="metadata" />
             ) : kind === "audio" ? (
