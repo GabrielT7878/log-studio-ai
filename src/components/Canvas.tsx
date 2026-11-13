@@ -1920,6 +1920,8 @@ export function Canvas({
               <PortalNode
                 key={n.id}
                 node={n}
+                space={project.space}
+                projectId={project.id}
                 zoom={n.id === fsNode?.id || n.id === fsLeaving?.id ? 1 : pan.zoom}
                 selected={selection.ids.includes(n.id)}
                 autoFocus={n.id === focusNoteId}

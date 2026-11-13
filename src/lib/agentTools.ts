@@ -22,6 +22,7 @@ import {
   NOTE_FONT_MAX,
   NOTE_FONT_MIN,
   PORTAL_DEFAULT_H,
+  normalizePortalFile,
   PORTAL_DEFAULT_W,
   TEXT_DEFAULTS,
   TEXT_FAMILIES,
@@ -205,7 +206,7 @@ function titleOf(n: CanvasNodeData): string {
     case "folder":
       return n.dir || "(raiz do projeto)";
     case "portal":
-      return n.url || "Portal";
+      return n.file || n.url || "Portal";
   }
 }
 
@@ -235,7 +236,8 @@ function summary(n: CanvasNodeData, terminalId: string) {
       base.approved = n.approved;
       break;
     case "portal":
-      base.url = n.url;
+      if (n.file) base.file = n.file;
+      else base.url = n.url;
       break;
     case "attachment":
       base.kind = attachmentKind(n.name);
@@ -460,11 +462,13 @@ const UPDATABLE: Record<CanvasNodeData["type"], string[]> = {
   terminal: ["title", "x", "y", "w", "h"],
   script: ["title", "command", "x", "y", "w"],
   board: ["title", "x", "y", "w", "h"],
-  portal: ["url", "x", "y", "w", "h"],
+  portal: ["url", "file", "x", "y", "w", "h"],
   folder: ["x", "y", "w", "h"],
   attachment: ["x", "y", "w", "h"],
   image: ["x", "y", "w"],
 };
+
+const FILE_HELP = `"file" inválido: caminho relativo ao projeto terminando em .html ou .htm (ex.: "site/index.html"), sem ".." nem caminho absoluto.`;
 
 function updatePatch(n: CanvasNodeData, args: Record<string, unknown>): NodePatch {
   const fields = Object.keys(args).filter((k) => k !== "id");
@@ -523,10 +527,17 @@ function updatePatch(n: CanvasNodeData, args: Record<string, unknown>): NodePatc
   }
 
   const url = str(args, "url", 4000);
+  const file = str(args, "file", 1000);
+  if (url !== undefined && file !== undefined) throw new ToolError(`Informe "url" ou "file", não os dois.`);
+  if (file !== undefined) {
+    const normalized = normalizePortalFile(file);
+    if (!normalized) throw new ToolError(FILE_HELP);
+    Object.assign(patch, { url: "", file: normalized });
+  }
   if (url !== undefined) {
     const normalized = normalizeUrl(url);
     if (!normalized) throw new ToolError(`"url" inválida (use http ou https).`);
-    patch.url = normalized;
+    Object.assign(patch, { url: normalized, file: undefined });
   }
   return patch;
 }
@@ -612,13 +623,24 @@ export async function runTool(
     }
 
     case "create_portal": {
-      const url = normalizeUrl(str(args, "url", 4000) ?? "");
-      if (!url) throw new ToolError(`"url" inválida (use http ou https, ou localhost:porta).`);
+      const rawUrl = str(args, "url", 4000);
+      const rawFile = str(args, "file", 1000);
+      if ((rawUrl === undefined) === (rawFile === undefined)) throw new ToolError(`Informe "url" ou "file" (um dos dois).`);
+      let target: { url: string; file?: string };
+      if (rawFile !== undefined) {
+        const file = normalizePortalFile(rawFile);
+        if (!file) throw new ToolError(FILE_HELP);
+        target = { url: "", file };
+      } else {
+        const url = normalizeUrl(rawUrl ?? "");
+        if (!url) throw new ToolError(`"url" inválida (use http ou https, ou localhost:porta).`);
+        target = { url };
+      }
       const min = minSize("portal");
       const w = Math.max(min.w, num(args, "w") ?? PORTAL_DEFAULT_W);
       const h = Math.max(min.h, num(args, "h") ?? PORTAL_DEFAULT_H);
-      const node: PortalNodeData = { id: crypto.randomUUID(), type: "portal", url, ...place(ctx, args, w, h), w, h };
-      return created(node, terminalId, `abriu um portal em ${url}`);
+      const node: PortalNodeData = { id: crypto.randomUUID(), type: "portal", ...target, ...place(ctx, args, w, h), w, h };
+      return created(node, terminalId, `abriu um portal em ${target.file ?? target.url}`);
     }
 
     case "create_image": {

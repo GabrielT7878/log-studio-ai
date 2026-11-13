@@ -115,8 +115,10 @@ export interface PortalNodeData {
   type: "portal";
   /** Janelas conectadas compartilham o mesmo id de grupo (movem juntas). */
   group?: string;
-  /** Endereço http(s) ("" = ainda não navegou). */
+  /** Endereço http(s) ("" = ainda não navegou). Ignorado quando há `file`. */
   url: string;
+  /** HTML do projeto aberto no Portal (caminho relativo, "a/b.html"). Tem prioridade sobre `url`. */
+  file?: string;
   x: number;
   y: number;
   w: number;
@@ -342,6 +344,19 @@ export const PORTAL_MIN_H = 240;
 export const PORTAL_DEFAULT_W = 1000;
 export const PORTAL_DEFAULT_H = 640;
 
+/**
+ * Caminho de um HTML do projeto para o Portal → "a/b.html" (barras "/", sem "./" no início).
+ * Recusa (null) caminhos absolutos, "..", esquemas e o que não termina em .html/.htm.
+ * O backend valida de novo antes de servir.
+ */
+export function normalizePortalFile(raw: string): string | null {
+  const text = raw.trim().replace(/\\/g, "/").replace(/^(\.\/)+/, "");
+  if (!text || text.length > 1000 || /^[a-z][a-z0-9+.-]*:/i.test(text) || text.startsWith("/")) return null;
+  const parts = text.split("/");
+  if (parts.some((p) => !p || p === "." || p === "..")) return null;
+  return /\.html?$/i.test(text) ? text : null;
+}
+
 // Quadro (Excalidraw)
 export const BOARD_MIN_W = 360;
 export const BOARD_MIN_H = 260;
@@ -499,11 +514,13 @@ export function sanitizeNodes(raw: unknown): CanvasNodeData[] {
     }
     if (o.type === "portal") {
       const url = typeof o.url === "string" && /^https?:\/\//i.test(o.url) && o.url.length <= 4000 ? o.url : "";
+      const file = typeof o.file === "string" ? normalizePortalFile(o.file) : null;
       return [
         {
           id: o.id,
           type: "portal",
           url,
+          ...(file ? { file } : {}),
           ...box,
           w: Math.max(PORTAL_MIN_W, o.w),
           h: Math.max(PORTAL_MIN_H, o.h),

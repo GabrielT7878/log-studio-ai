@@ -140,6 +140,12 @@ export const api = {
 
   // Portal: o site permite ser mostrado dentro do app (iframe)?
   portalCheck: (url: string) => invoke<{ blocked: boolean }>("portal_check", { url }),
+  // Portal com HTML do projeto: URL do servidor local (`file` relativo ao projeto).
+  portalLocalUrl: (space: string, projectId: string, file: string) =>
+    invoke<string>("portal_local_url", { space, projectId, file }),
+  // Caminho escolhido no seletor → relativo ao projeto (erro se estiver fora dele).
+  portalRelativePath: (space: string, projectId: string, path: string) =>
+    invoke<string>("portal_relative_path", { space, projectId, path }),
 
   // Anexos (arquivos em <projeto>/.logstudio/anexos/)
   importAttachments: (space: string, projectId: string, paths: string[]) =>
