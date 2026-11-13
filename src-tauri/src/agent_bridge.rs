@@ -363,17 +363,17 @@ fn tools() -> Vec<Value> {
         }),
         json!({
             "name": "create_portal",
-            "description": "Cria uma janela de navegador (Portal) já aberta na URL. Sites que bloqueiam ser embutidos mostram um aviso com botão para abrir no navegador.",
+            "description": "Cria uma janela de navegador (Portal) já aberta numa URL ou num arquivo HTML do projeto. Informe `url` OU `file`. Sites que bloqueiam ser embutidos mostram um aviso com botão para abrir no navegador. Com `file`, o app serve só a pasta desse HTML (CSS/JS/imagens relativos funcionam; arquivos e pastas ocultos, como .env, não são servidos).",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "url": { "type": "string", "description": "http(s) ou localhost:porta." },
+                    "file": { "type": "string", "description": "HTML do projeto: caminho relativo ao projeto terminando em .html/.htm (ex.: \"site/index.html\")." },
                     "x": { "type": "number" },
                     "y": { "type": "number" },
                     "w": { "type": "number", "description": "Padrão 1000." },
                     "h": { "type": "number", "description": "Padrão 640." }
                 },
-                "required": ["url"],
                 "additionalProperties": false
             }
         }),
@@ -635,7 +635,7 @@ fn tools() -> Vec<Value> {
         }),
         json!({
             "name": "update_window",
-            "description": "Altera uma janela existente. Campos aceitos por tipo — todos: x, y; nota: title, text, color, fontSize, w, h; texto: text, color (#rrggbb), fontSize; terminal: title, w, h; script: title, command (volta a exigir aprovação do usuário), w; portal: url, w, h; pasta/anexo: w, h; imagem: w (a altura segue a proporção).",
+            "description": "Altera uma janela existente. Campos aceitos por tipo — todos: x, y; nota: title, text, color, fontSize, w, h; texto: text, color (#rrggbb), fontSize; terminal: title, w, h; script: title, command (volta a exigir aprovação do usuário), w; portal: url ou file (HTML do projeto, caminho relativo), w, h; pasta/anexo: w, h; imagem: w (a altura segue a proporção).",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -644,6 +644,7 @@ fn tools() -> Vec<Value> {
                     "text": { "type": "string" },
                     "color": { "type": "string" },
                     "url": { "type": "string" },
+                    "file": { "type": "string" },
                     "command": { "type": "string" },
                     "fontSize": { "type": "number" },
                     "x": { "type": "number" },

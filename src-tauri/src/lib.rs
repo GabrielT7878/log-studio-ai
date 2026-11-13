@@ -5,6 +5,7 @@ mod fetch;
 mod filename;
 mod files;
 mod images;
+mod local_site;
 mod portal;
 mod pty;
 mod settings;
@@ -13,6 +14,7 @@ mod usage;
 mod workspace;
 
 use agent_bridge::Bridge;
+use local_site::LocalSites;
 use pty::{Agent, CanvasLink, PtyEvent, PtyManager};
 use settings::Settings;
 use tauri::ipc::Channel;
@@ -551,6 +553,55 @@ fn portal_check(url: String) -> CmdResult<portal::FrameCheck> {
     portal::check(&url)
 }
 
+struct LocalSitesState(Option<Arc<LocalSites>>);
+
+/// URL para mostrar no Portal um HTML do projeto (`file` relativo ao projeto).
+/// Serve só a pasta desse arquivo, numa origem própria (ver `local_site.rs`).
+#[tauri::command(async)]
+fn portal_local_url(
+    state: State<'_, AppState>,
+    sites: State<'_, LocalSitesState>,
+    space: String,
+    project_id: String,
+    file: String,
+) -> CmdResult<String> {
+    let sites = sites.0.as_ref().ok_or("O servidor do Portal não está disponível.")?;
+    let dir = project_dir(&state, &space, &project_id)?;
+    let path = files::resolve(&dir, &file)?;
+    if !path.is_file() {
+        return Err(format!("Arquivo não encontrado: {file}"));
+    }
+    if !local_site::is_html(&path) {
+        return Err("O Portal só abre arquivos .html ou .htm.".into());
+    }
+    let root = path.parent().ok_or("Caminho inválido.")?;
+    sites.url_for(root, &path)
+}
+
+/// Caminho escolhido no seletor de arquivos → caminho relativo ao projeto ("a/b.html").
+/// Só converte (não lê nem altera nada); recusa arquivos fora do projeto.
+#[tauri::command(async)]
+fn portal_relative_path(
+    state: State<'_, AppState>,
+    space: String,
+    project_id: String,
+    path: String,
+) -> CmdResult<String> {
+    let outside = || "Só é possível abrir arquivos HTML de dentro do projeto.".to_string();
+    let dir = project_dir(&state, &space, &project_id)?;
+    let real_dir = std::fs::canonicalize(&dir).map_err(|e| e.to_string())?;
+    let real = std::fs::canonicalize(&path).map_err(|_| format!("Arquivo não encontrado: {path}"))?;
+    let rel = real.strip_prefix(&real_dir).map_err(|_| outside())?;
+    let parts: Vec<String> = rel
+        .components()
+        .map(|c| c.as_os_str().to_string_lossy().to_string())
+        .collect();
+    if parts.is_empty() {
+        return Err(outside());
+    }
+    Ok(parts.join("/"))
+}
+
 // ---------------- Anexos (qualquer arquivo no canvas) ----------------
 
 /// Arquivos escolhidos no seletor ou arrastados do Explorer: copia cada um para os anexos.
@@ -686,6 +737,8 @@ pub fn run() {
                 .map_err(|e| eprintln!("{e}"))
                 .ok();
             app.manage(BridgeState(bridge));
+            let sites = LocalSites::start().map_err(|e| eprintln!("{e}")).ok();
+            app.manage(LocalSitesState(sites));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -731,6 +784,8 @@ pub fn run() {
             fs_create,
             fs_move,
             portal_check,
+            portal_local_url,
+            portal_relative_path,
             import_attachments,
             save_attachment,
             attachment_src,
