@@ -133,8 +133,10 @@ export interface AttachmentNodeData {
   group?: string;
   /** Nome do arquivo salvo em anexos/ (gerado). */
   file: string;
-  /** Nome original (mostrado). */
+  /** Nome original do arquivo. */
   name: string;
+  /** Título dado pelo usuário/agente (ausente = mostra `name`). O arquivo não é renomeado. */
+  title?: string;
   /** Tamanho em bytes. */
   size: number;
   x: number;
@@ -475,6 +477,7 @@ export function sanitizeNodes(raw: unknown): CanvasNodeData[] {
           type: "attachment",
           file: o.file,
           name: typeof o.name === "string" && o.name ? o.name.slice(0, 200) : o.file,
+          ...(typeof o.title === "string" && o.title.trim() ? { title: o.title.slice(0, 200) } : {}),
           size: isNum(o.size) && o.size >= 0 ? o.size : 0,
           ...box,
           w: Math.max(ATTACHMENT_MIN_W, o.w),

@@ -1910,10 +1910,12 @@ export function Canvas({
                 projectId={project.id}
                 zoom={n.id === fsNode?.id || n.id === fsLeaving?.id ? 1 : pan.zoom}
                 selected={selection.ids.includes(n.id)}
+                editingTitle={n.id === editingTitleId}
                 onSelect={selectNode}
                 fullscreen={n.id === fsNode?.id || n.id === fsLeaving?.id}
                 onToggleFullscreen={toggleFullscreen}
                 onChange={changeNode}
+                onTitleDone={finishTitle}
                 onError={toast.show}
               />
             ) : n.type === "portal" ? (
@@ -2140,10 +2142,14 @@ export function Canvas({
               ? scriptActions(selectedNode)
             : selectedNode.type === "text"
               ? textActions(selectedNode)
+              : selectedNode.type === "attachment"
+              ? [
+                  [{ icon: SquarePen, label: "Renomear", onClick: () => setEditingTitleId(selectedNode.id) }],
+                  [{ icon: Trash2, label: "Excluir", onClick: () => deleteNode(selectedNode) }],
+                ]
               : selectedNode.type === "image" ||
                 selectedNode.type === "folder" ||
-                selectedNode.type === "portal" ||
-                selectedNode.type === "attachment"
+                selectedNode.type === "portal"
               ? [[{ icon: Trash2, label: "Excluir", onClick: () => deleteNode(selectedNode) }]]
               : [
                 [{ icon: SquarePen, label: "Renomear", onClick: () => setEditingTitleId(selectedNode.id) }],

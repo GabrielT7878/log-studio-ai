@@ -635,7 +635,7 @@ fn tools() -> Vec<Value> {
         }),
         json!({
             "name": "update_window",
-            "description": "Altera uma janela existente. Campos aceitos por tipo — todos: x, y; nota: title, text, color, fontSize, w, h; texto: text, color (#rrggbb), fontSize; terminal: title, w, h; script: title, command (volta a exigir aprovação do usuário), w; portal: url ou file (HTML do projeto, caminho relativo), w, h; pasta/anexo: w, h; imagem: w (a altura segue a proporção).",
+            "description": "Altera uma janela existente. Campos aceitos por tipo — todos: x, y; nota: title, text, color, fontSize, w, h; texto: text, color (#rrggbb), fontSize; terminal: title, w, h; script: title, command (volta a exigir aprovação do usuário), w; portal: url ou file (HTML do projeto, caminho relativo), w, h; pasta: w, h; anexo: title (só o título da janela; o arquivo não é renomeado), w, h; imagem: w (a altura segue a proporção).",
             "inputSchema": {
                 "type": "object",
                 "properties": {
