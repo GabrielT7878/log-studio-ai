@@ -263,6 +263,63 @@ fn set_backup_settings(
     backup_status_of(&app, &state, &bk)
 }
 
+// ---------------- Fechar o app (backup ao fechar) ----------------
+
+/// Tempo para a interface responder ao pedido de fechar; sem resposta (travada), fecha.
+const CLOSE_ACK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+#[derive(Default)]
+struct CloseState {
+    /// `app_exit` foi chamado: o próximo pedido de fechar passa direto.
+    allowed: AtomicBool,
+    /// A interface recebeu o último `app://close-requested`.
+    acked: AtomicBool,
+}
+
+/// Com o backup automático ligado, segura o fechamento da janela principal e avisa a
+/// interface (`app://close-requested`), que faz o backup e chama `app_exit`.
+fn on_close_requested(window: &tauri::Window, api: &tauri::CloseRequestApi) {
+    if window.label() != "main" {
+        return;
+    }
+    let app = window.app_handle().clone();
+    let close = app.state::<CloseState>();
+    if close.allowed.load(Ordering::SeqCst) {
+        return;
+    }
+    let auto = app
+        .state::<AppState>()
+        .settings
+        .lock()
+        .map(|s| settings::backup_auto(&s))
+        .unwrap_or(false);
+    if !auto {
+        return;
+    }
+    api.prevent_close();
+    close.acked.store(false, Ordering::SeqCst);
+    let _ = window.emit("app://close-requested", ());
+    std::thread::spawn(move || {
+        std::thread::sleep(CLOSE_ACK_TIMEOUT);
+        if !app.state::<CloseState>().acked.load(Ordering::SeqCst) {
+            app.exit(0);
+        }
+    });
+}
+
+/// A interface recebeu o pedido de fechar (cancela o fechamento forçado por tempo).
+#[tauri::command]
+fn close_ack(close: State<'_, CloseState>) {
+    close.acked.store(true, Ordering::SeqCst);
+}
+
+/// Fecha o app de verdade (depois do backup, ou "Cancelar e fechar").
+#[tauri::command]
+fn app_exit(app: AppHandle, close: State<'_, CloseState>) {
+    close.allowed.store(true, Ordering::SeqCst);
+    app.exit(0);
+}
+
 // ---------------- Espaços de trabalho ----------------
 
 #[tauri::command(async)]
@@ -912,6 +969,7 @@ pub fn run() {
             });
             app.manage(PtyManager::default());
             app.manage(BackupState::default());
+            app.manage(CloseState::default());
             let bridge = Bridge::start(app.handle().clone())
                 .map_err(|e| eprintln!("{e}"))
                 .ok();
@@ -919,6 +977,11 @@ pub fn run() {
             let sites = LocalSites::start().map_err(|e| eprintln!("{e}")).ok();
             app.manage(LocalSitesState(sites));
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                on_close_requested(window, api);
+            }
         })
         .invoke_handler(tauri::generate_handler![
             get_settings,
@@ -930,6 +993,8 @@ pub fn run() {
             backup_has_changes,
             backup_restore,
             set_backup_settings,
+            close_ack,
+            app_exit,
             list_spaces,
             create_space,
             select_space,

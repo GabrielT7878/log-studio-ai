@@ -76,6 +76,7 @@ export default async function globalSetup() {
     stdio: "inherit",
   });
   console.log(`[e2e] app iniciado (pid ${app.pid}), pasta de projetos: ${root}`);
+  process.env.LOGSTUDIO_E2E_PID = String(app.pid); // o teste de fechar o app usa
   try {
     await waitForCdp(app, 120_000);
   } catch (e) {
