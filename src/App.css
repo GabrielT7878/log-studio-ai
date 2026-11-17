@@ -189,6 +189,9 @@ button {
   position: relative;
   flex: 1;
   overflow: hidden;
+  /* clip: corta igual, mas não deixa o navegador rolar o canvas ao focar algo na borda
+     (foco do xterm etc.) — senão a barra do topo e os botões da janela se deslocam. */
+  overflow: clip;
   background-color: var(--bg-canvas);
   background-image:
     linear-gradient(var(--grid-line) 1px, transparent 1px),
