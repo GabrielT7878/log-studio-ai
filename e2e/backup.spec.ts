@@ -1,9 +1,9 @@
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { closeSettings, createInTree, expect, openSettings, spaceDir, test, treeItem, unique } from "./app";
 
 test.describe("Backup", () => {
-  test("faz backup pela tela de Configurações e restaura numa pasta nova, com o canvas", async ({ app }) => {
+  test("faz backup da estrutura e do canvas e restaura numa pasta nova", async ({ app }) => {
     // Projeto com uma janela de anexo (canvas no .logstudio.json + arquivo em .logstudio/anexos).
     const project = unique("Backup");
     await createInTree(app, "Novo projeto", project);
@@ -15,6 +15,11 @@ test.describe("Backup", () => {
       document.dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true }));
     });
     await expect(app.locator(".attachment-node").last().locator(".at-name")).toHaveText("dados.csv");
+    // Arquivos comuns do projeto NÃO entram no backup; só a pasta (estrutura) entra.
+    const projectDir = join(spaceDir(), project);
+    mkdirSync(join(projectDir, "src"), { recursive: true });
+    writeFileSync(join(projectDir, "src", "main.ts"), "console.log(1);");
+    writeFileSync(join(projectDir, "notas.md"), "olá");
 
     await openSettings(app);
     const modal = app.locator(".st-modal");
@@ -42,6 +47,9 @@ test.describe("Backup", () => {
     expect(meta).toContain("dados.csv");
     const anexos = join(target, space, project, ".logstudio", "anexos");
     expect(existsSync(anexos) && readdirSync(anexos).some((n) => n.endsWith(".csv"))).toBe(true);
+    expect(existsSync(join(target, space, project, "src"))).toBe(true);
+    expect(existsSync(join(target, space, project, "src", "main.ts"))).toBe(false);
+    expect(existsSync(join(target, space, project, "notas.md"))).toBe(false);
 
     await closeSettings(app);
   });

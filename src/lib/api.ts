@@ -13,7 +13,6 @@ export interface Settings {
 export interface BackupStatus {
   dir: string;
   auto: boolean;
-  exclusions: string[];
   /** Segundos desde 1970. */
   lastBackupAt: number | null;
   running: boolean;
@@ -110,7 +109,7 @@ export const api = {
   backupHasChanges: () => invoke<boolean>("backup_has_changes"),
   /** Restaura numa pasta nova ao lado da raiz; devolve o caminho dela. */
   backupRestore: (file: string) => invoke<string>("backup_restore", { file }),
-  setBackupSettings: (changes: { auto?: boolean; dir?: string; exclusions?: string[] }) =>
+  setBackupSettings: (changes: { auto?: boolean; dir?: string }) =>
     invoke<BackupStatus>("set_backup_settings", changes),
   onBackupProgress: (cb: (p: BackupProgress) => void): Promise<UnlistenFn> =>
     listen<BackupProgress>("backup://progress", (e) => cb(e.payload)),

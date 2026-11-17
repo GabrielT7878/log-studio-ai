@@ -25,9 +25,6 @@ pub struct BackupSettings {
     /// Backup automático (de hora em hora e ao fechar).
     #[serde(default)]
     pub auto: Option<bool>,
-    /// Nomes de pastas/arquivos (ou `*.ext`) que ficam fora do backup.
-    #[serde(default)]
-    pub exclusions: Option<Vec<String>>,
     /// Último backup concluído (segundos desde 1970).
     #[serde(default)]
     pub last_backup_at: Option<i64>,
@@ -86,14 +83,6 @@ pub fn backup_auto(settings: &Settings) -> bool {
     settings.backup.auto.unwrap_or(!is_e2e())
 }
 
-pub fn backup_exclusions(settings: &Settings) -> Vec<String> {
-    settings
-        .backup
-        .exclusions
-        .clone()
-        .unwrap_or_else(crate::backup::default_exclusions)
-}
-
 /// Lê as configurações; usa o padrão se o arquivo não existir ou estiver inválido.
 /// `LOGSTUDIO_PROJECTS_ROOT` (testes e2e) substitui a pasta de projetos.
 pub fn load(app: &AppHandle) -> Settings {
@@ -128,5 +117,13 @@ mod tests {
     fn old_settings_without_backup_still_load() {
         let s: Settings = serde_json::from_str(r#"{"projectsRoot":"C:\\x"}"#).unwrap();
         assert!(s.backup.dir.is_none() && s.backup.auto.is_none() && s.backup.last_backup_at.is_none());
+    }
+
+    #[test]
+    fn settings_with_old_exclusions_still_load() {
+        let s: Settings =
+            serde_json::from_str(r#"{"projectsRoot":"C:\\x","backup":{"auto":true,"exclusions":["node_modules"]}}"#)
+                .unwrap();
+        assert_eq!(s.backup.auto, Some(true));
     }
 }

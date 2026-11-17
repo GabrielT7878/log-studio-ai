@@ -109,7 +109,6 @@ impl Drop for RunningGuard<'_> {
 struct BackupStatus {
     dir: PathBuf,
     auto: bool,
-    exclusions: Vec<String>,
     last_backup_at: Option<i64>,
     running: bool,
     /// O último backup foi interrompido (ficou o marcador): fazer um agora.
@@ -124,20 +123,19 @@ fn backup_status_of(app: &AppHandle, state: &State<'_, AppState>, bk: &BackupSta
     Ok(BackupStatus {
         dir: settings::backup_dir(app, &s),
         auto: settings::backup_auto(&s),
-        exclusions: settings::backup_exclusions(&s),
         last_backup_at: s.backup.last_backup_at,
         running: bk.running.load(Ordering::SeqCst),
         needs_recovery: settings::backup_pending_file(app).is_ok_and(|p| p.exists()),
     })
 }
 
-/// (raiz, pasta de backups, exclusões) — copiados para não segurar o lock durante o backup.
-fn backup_paths(app: &AppHandle, state: &State<'_, AppState>) -> CmdResult<(PathBuf, PathBuf, Vec<String>)> {
+/// (raiz, pasta de backups) — copiados para não segurar o lock durante o backup.
+fn backup_paths(app: &AppHandle, state: &State<'_, AppState>) -> CmdResult<(PathBuf, PathBuf)> {
     let s = state
         .settings
         .lock()
         .map_err(|_| "Estado interno indisponível.".to_string())?;
-    Ok((s.projects_root.clone(), settings::backup_dir(app, &s), settings::backup_exclusions(&s)))
+    Ok((s.projects_root.clone(), settings::backup_dir(app, &s)))
 }
 
 #[tauri::command(async)]
@@ -145,7 +143,7 @@ fn backup_status(app: AppHandle, state: State<'_, AppState>, bk: State<'_, Backu
     backup_status_of(&app, &state, &bk)
 }
 
-/// Faz um backup da raiz inteira. Emite `backup://progress` ({ done, total }).
+/// Faz um backup da estrutura dos projetos e dos canvas. Emite `backup://progress` ({ done, total }).
 #[tauri::command(async)]
 fn backup_create(
     app: AppHandle,
@@ -157,7 +155,7 @@ fn backup_create(
     }
     let _running = RunningGuard(&bk.running);
     bk.cancel.store(false, Ordering::SeqCst);
-    let (root, dest, exclusions) = backup_paths(&app, &state)?;
+    let (root, dest) = backup_paths(&app, &state)?;
 
     // Só um backup por vez: qualquer .zip.tmp que sobrou é de um backup interrompido.
     for tmp in backup::stale_tmps(&dest) {
@@ -172,7 +170,7 @@ fn backup_create(
         .map_err(|e| format!("Não foi possível iniciar o backup: {e}"))?;
 
     let version = app.package_info().version.to_string();
-    let info = backup::create(&root, &dest, &exclusions, &version, &bk.cancel, |p| {
+    let info = backup::create(&root, &dest, &version, &bk.cancel, |p| {
         let _ = app.emit("backup://progress", p);
     })?;
 
@@ -197,7 +195,7 @@ fn backup_cancel(bk: State<'_, BackupState>) {
 
 #[tauri::command(async)]
 fn backup_list(app: AppHandle, state: State<'_, AppState>) -> CmdResult<Vec<backup::BackupInfo>> {
-    let (_, dest, _) = backup_paths(&app, &state)?;
+    let (_, dest) = backup_paths(&app, &state)?;
     Ok(backup::list(&dest))
 }
 
@@ -210,15 +208,15 @@ fn backup_has_changes(app: AppHandle, state: State<'_, AppState>) -> CmdResult<b
         .map_err(|_| "Estado interno indisponível.".to_string())?
         .backup
         .last_backup_at;
-    let (root, _, exclusions) = backup_paths(&app, &state)?;
-    Ok(last.is_none_or(|t| backup::changed_since(&root, &exclusions, t)))
+    let (root, _) = backup_paths(&app, &state)?;
+    Ok(last.is_none_or(|t| backup::changed_since(&root, t)))
 }
 
 /// Restaura o backup `file` (nome dentro da pasta de backups) numa pasta nova
 /// ao lado da raiz. Devolve o caminho da pasta criada.
 #[tauri::command(async)]
 fn backup_restore(app: AppHandle, state: State<'_, AppState>, file: String) -> CmdResult<String> {
-    let (root, dest, _) = backup_paths(&app, &state)?;
+    let (root, dest) = backup_paths(&app, &state)?;
     let zip = backup::path_of(&dest, &file)?;
     backup::restore(&zip, &root).map(|p| p.to_string_lossy().into_owned())
 }
@@ -230,7 +228,6 @@ fn set_backup_settings(
     bk: State<'_, BackupState>,
     auto: Option<bool>,
     dir: Option<String>,
-    exclusions: Option<Vec<String>>,
 ) -> CmdResult<BackupStatus> {
     {
         let mut s = state
@@ -248,14 +245,6 @@ fn set_backup_settings(
             }
             std::fs::create_dir_all(&dir).map_err(|e| format!("Não foi possível criar o diretório: {e}"))?;
             next.backup.dir = Some(dir);
-        }
-        if let Some(list) = exclusions {
-            next.backup.exclusions = Some(
-                list.iter()
-                    .map(|e| e.trim().to_string())
-                    .filter(|e| !e.is_empty())
-                    .collect(),
-            );
         }
         settings::save(&app, &next)?;
         *s = next;

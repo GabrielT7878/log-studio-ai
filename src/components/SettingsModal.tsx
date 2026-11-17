@@ -151,13 +151,12 @@ function fmtSize(bytes: number) {
   return `${v.toFixed(v < 10 ? 1 : 0).replace(".", ",")} ${units[i]}`;
 }
 
-/** Backup da raiz inteira: destino, automático, exclusões, backup manual e restauração. */
+/** Backup da estrutura dos projetos e dos canvas: destino, automático, backup manual e restauração. */
 function BackupSection() {
   const [status, setStatus] = useState<BackupStatus | null>(null);
   const [backups, setBackups] = useState<BackupInfo[]>([]);
   const [progress, setProgress] = useState<BackupProgress | null>(null);
   const [running, setRunning] = useState(false);
-  const [exclusions, setExclusions] = useState("");
   const [confirming, setConfirming] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [restoredTo, setRestoredTo] = useState<string | null>(null);
@@ -168,7 +167,6 @@ function BackupSection() {
     setStatus(st);
     setBackups(list);
     setRunning(st.running);
-    setExclusions(st.exclusions.join(", "));
   }, []);
 
   useEffect(() => {
@@ -203,18 +201,6 @@ function BackupSection() {
 
   const setAuto = (auto: boolean) => guard(async () => setStatus(await api.setBackupSettings({ auto })));
 
-  const saveExclusions = () =>
-    guard(async () => {
-      const list = exclusions
-        .split(",")
-        .map((e) => e.trim())
-        .filter(Boolean);
-      if (status && list.join(",") === status.exclusions.join(",")) return;
-      const st = await api.setBackupSettings({ exclusions: list });
-      setStatus(st);
-      setExclusions(st.exclusions.join(", "));
-    });
-
   const backupNow = () =>
     guard(async () => {
       setMessage(null);
@@ -246,7 +232,7 @@ function BackupSection() {
     <Section title="BACKUP">
       <Row
         title="Pasta dos backups"
-        desc="Cada backup é um .zip com todos os espaços e projetos."
+        desc="Cada backup é um .zip com os espaços, as pastas dos projetos e os canvas (notas, imagens, anexos e quadros). Os demais arquivos dos projetos não entram."
         control={
           <div className="st-path">
             <span className="st-path-text" title={status?.dir}>
@@ -262,21 +248,6 @@ function BackupSection() {
         title="Backup automático"
         desc="Faz um backup quando o último tiver mais de 1 hora e ao fechar o app."
         control={<Toggle on={status?.auto ?? false} label="Backup automático" onChange={setAuto} />}
-      />
-      <Row
-        title="Excluir do backup"
-        desc="Nomes de pastas ou arquivos, separados por vírgula. Use *.ext para terminações."
-        control={
-          <input
-            className="st-input"
-            aria-label="Excluir do backup"
-            value={exclusions}
-            onChange={(e) => setExclusions(e.target.value)}
-            onBlur={saveExclusions}
-            onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
-            spellCheck={false}
-          />
-        }
       />
       <Row
         title="Fazer backup agora"

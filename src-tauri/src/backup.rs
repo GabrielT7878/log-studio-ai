@@ -1,9 +1,12 @@
-//! Backup da raiz dos projetos inteira (todos os espaços) num `.zip`.
+//! Backup da estrutura dos projetos e dos canvas (todos os espaços) num `.zip`.
 //!
+//! - Entram: `.logstudio-workspaces.json`, o `.logstudio.json` de cada espaço (árvore +
+//!   janelas de todos os projetos), tudo dentro de `<projeto>/.logstudio/` (imagens,
+//!   anexos, quadros) e as pastas (vazias). Os demais arquivos dos projetos NÃO entram.
+//! - Pastas de dependências/build (`node_modules`, `target`…) nem são percorridas.
 //! - O zip é escrito como `<nome>.zip.tmp` e só vira `.zip` no fim: um backup
 //!   interrompido (queda de energia, app encerrado à força) nunca parece válido.
 //! - `backup-manifest.json` vai por último dentro do zip (data, espaços, contagens).
-//! - Pastas excluídas por nome (`node_modules`, `target`…) e arquivos `*.tmp` ficam de fora.
 //! - Retenção em camadas: o mais novo de cada uma das últimas 24 horas, 7 dias e
 //!   4 semanas que têm backup; o resto vai para a Lixeira.
 //! - Restaurar extrai sempre numa pasta NOVA ao lado da raiz (nunca sobrescreve).
@@ -32,13 +35,12 @@ const KEEP_HOURS: usize = 24;
 const KEEP_DAYS: usize = 7;
 const KEEP_WEEKS: usize = 4;
 
-/// Exclusões padrão: nomes de pastas/arquivos, ou `*.ext` para terminações.
-pub fn default_exclusions() -> Vec<String> {
-    ["node_modules", "target", "dist", ".git", "*.tmp"]
-        .iter()
-        .map(|s| s.to_string())
-        .collect()
-}
+/// Pastas que não são percorridas (nem a estrutura delas entra no backup).
+const SKIP_DIRS: &[&str] = &["node_modules", "target", "dist", ".git", ".venv", "venv", "__pycache__"];
+/// Pasta com os arquivos das janelas do canvas (imagens, anexos, quadros).
+const CANVAS_DIR: &str = ".logstudio";
+/// Arquivos de metadados do app (lista de espaços; árvore + canvas de um espaço).
+const META_FILES: &[&str] = &[".logstudio-workspaces.json", ".logstudio.json"];
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -80,15 +82,8 @@ pub fn now_secs() -> i64 {
         .unwrap_or(0)
 }
 
-fn excluded(name: &str, exclusions: &[String]) -> bool {
-    let name = name.to_lowercase();
-    exclusions.iter().any(|pat| {
-        let pat = pat.trim().to_lowercase();
-        match pat.strip_prefix('*') {
-            Some(suffix) if !suffix.is_empty() => name.ends_with(suffix),
-            _ => !pat.is_empty() && name == pat,
-        }
-    })
+fn skipped_dir(name: &str) -> bool {
+    SKIP_DIRS.iter().any(|d| d.eq_ignore_ascii_case(name))
 }
 
 fn same_path(a: &Path, b: &Path) -> bool {
@@ -98,18 +93,32 @@ fn same_path(a: &Path, b: &Path) -> bool {
     }
 }
 
-/// Entradas da raiz que entram no backup (pastas e arquivos), sem a própria raiz.
-/// Ignora exclusões, links simbólicos e a pasta de backups (se estiver dentro da raiz).
-fn collect(root: &Path, dest: &Path, exclusions: &[String]) -> Res<Vec<walkdir::DirEntry>> {
+/// O arquivo entra no backup? Só metadados do app e o que está em `.logstudio/`.
+fn wanted_file(root: &Path, path: &Path) -> bool {
+    let name = path.file_name().map(|n| n.to_string_lossy()).unwrap_or_default();
+    if name.to_lowercase().ends_with(".tmp") {
+        return false;
+    }
+    META_FILES.contains(&name.as_ref())
+        || path
+            .strip_prefix(root)
+            .is_ok_and(|rel| rel.parent().is_some_and(|p| p.components().any(|c| c.as_os_str() == CANVAS_DIR)))
+}
+
+/// Entradas que entram no backup: todas as pastas (menos `SKIP_DIRS` e a pasta de
+/// backups, se estiver dentro da raiz) e os arquivos de `wanted_file`. Sem a raiz e
+/// sem links simbólicos.
+fn collect(root: &Path, dest: &Path) -> Res<Vec<walkdir::DirEntry>> {
     let mut out = Vec::new();
     let walker = WalkDir::new(root).follow_links(false).into_iter().filter_entry(|e| {
         e.depth() == 0
-            || (!excluded(&e.file_name().to_string_lossy(), exclusions)
-                && !(e.file_type().is_dir() && same_path(e.path(), dest)))
+            || !e.file_type().is_dir()
+            || (!skipped_dir(&e.file_name().to_string_lossy()) && !same_path(e.path(), dest))
     });
     for entry in walker {
         let entry = entry.map_err(|e| format!("Não foi possível ler {}: {e}", root.display()))?;
-        if entry.depth() == 0 || entry.file_type().is_symlink() {
+        let ft = entry.file_type();
+        if entry.depth() == 0 || ft.is_symlink() || (ft.is_file() && !wanted_file(root, entry.path())) {
             continue;
         }
         out.push(entry);
@@ -146,7 +155,6 @@ fn file_name_for(dest: &Path, ts: i64) -> String {
 pub fn create(
     root: &Path,
     dest: &Path,
-    exclusions: &[String],
     app_version: &str,
     cancel: &AtomicBool,
     mut progress: impl FnMut(Progress),
@@ -156,7 +164,7 @@ pub fn create(
     }
     fs::create_dir_all(dest).map_err(|e| format!("Não foi possível criar a pasta de backups: {e}"))?;
 
-    let entries = collect(root, dest, exclusions)?;
+    let entries = collect(root, dest)?;
     let total = entries.iter().filter(|e| e.file_type().is_file()).count() as u64;
     let created_at = now_secs();
     let name = file_name_for(dest, created_at);
@@ -395,19 +403,19 @@ fn extract(zip_path: &Path, target: &Path) -> Res<()> {
     Ok(())
 }
 
-/// Algo na raiz (fora das exclusões) mudou depois de `since` (segundos)?
+/// Algo que entra no backup mudou depois de `since` (segundos)?
 /// Pastas contam: criar, apagar ou renomear dentro delas muda a data delas.
-pub fn changed_since(root: &Path, exclusions: &[String], since: i64) -> bool {
-    let walker = WalkDir::new(root)
-        .follow_links(false)
-        .into_iter()
-        .filter_entry(|e| e.depth() == 0 || !excluded(&e.file_name().to_string_lossy(), exclusions));
+pub fn changed_since(root: &Path, since: i64) -> bool {
+    let walker = WalkDir::new(root).follow_links(false).into_iter().filter_entry(|e| {
+        e.depth() == 0 || !e.file_type().is_dir() || !skipped_dir(&e.file_name().to_string_lossy())
+    });
     walker.flatten().any(|e| {
-        e.metadata()
-            .ok()
-            .and_then(|m| m.modified().ok())
-            .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-            .is_some_and(|d| d.as_secs() as i64 > since)
+        (e.file_type().is_dir() || wanted_file(root, e.path()))
+            && e.metadata()
+                .ok()
+                .and_then(|m| m.modified().ok())
+                .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                .is_some_and(|d| d.as_secs() as i64 > since)
     })
 }
 
@@ -431,6 +439,8 @@ mod tests {
         fs::create_dir_all(p.join(".logstudio").join("quadros")).unwrap();
         fs::create_dir_all(p.join("node_modules").join("lib")).unwrap();
         fs::create_dir_all(p.join(".git")).unwrap();
+        fs::create_dir_all(p.join("src")).unwrap();
+        fs::write(p.join("src").join("main.rs"), "fn main() {}").unwrap();
         fs::create_dir_all(root.join("Trabalho").join("Vazio")).unwrap();
         fs::write(root.join(".logstudio-workspaces.json"), "{}").unwrap();
         fs::write(root.join("Pessoal").join(".logstudio.json"), "{\"canvas\":1}").unwrap();
@@ -454,14 +464,15 @@ mod tests {
     }
 
     #[test]
-    fn exclusion_patterns() {
-        let ex = default_exclusions();
-        assert!(excluded("node_modules", &ex));
-        assert!(excluded("Node_Modules", &ex));
-        assert!(excluded("a.TMP", &ex));
-        assert!(!excluded("targets", &ex));
-        assert!(!excluded("notas.md", &ex));
-        assert!(!excluded("x", &["".into(), "*".into()]));
+    fn only_meta_and_canvas_files() {
+        let root = Path::new("R");
+        assert!(wanted_file(root, Path::new("R/.logstudio-workspaces.json")));
+        assert!(wanted_file(root, Path::new("R/Pessoal/.logstudio.json")));
+        assert!(wanted_file(root, Path::new("R/Pessoal/P/.logstudio/anexos/a.pdf")));
+        assert!(!wanted_file(root, Path::new("R/Pessoal/P/.logstudio/anexos/a.pdf.tmp")));
+        assert!(!wanted_file(root, Path::new("R/Pessoal/P/notas.md")));
+        assert!(!wanted_file(root, Path::new("R/Pessoal/P/jogo.iso")));
+        assert!(skipped_dir("Node_Modules") && !skipped_dir("targets"));
     }
 
     #[test]
@@ -470,13 +481,13 @@ mod tests {
         let root = sample_root(&base);
         let dest = base.join("Backups");
         let mut last = Progress { done: 0, total: 0 };
-        let info = create(&root, &dest, &default_exclusions(), "0.0.0", &AtomicBool::new(false), |p| last = p)
+        let info = create(&root, &dest, "0.0.0", &AtomicBool::new(false), |p| last = p)
             .unwrap();
 
         assert!(is_backup_name(&info.file));
         assert_eq!(info.spaces, vec!["Pessoal".to_string(), "Trabalho".to_string()]);
-        assert_eq!(info.files, 4);
-        assert_eq!((last.done, last.total), (4, 4));
+        assert_eq!(info.files, 3);
+        assert_eq!((last.done, last.total), (3, 3));
         assert!(stale_tmps(&dest).is_empty());
 
         let listed = list(&dest);
@@ -493,12 +504,12 @@ mod tests {
             "Pessoal/Projeto A/.logstudio",
             "Pessoal/Projeto A/.logstudio/quadros",
             "Pessoal/Projeto A/.logstudio/quadros/q.excalidraw",
-            "Pessoal/Projeto A/notas.md",
+            "Pessoal/Projeto A/src",
             "Trabalho",
             "Trabalho/Vazio",
         ];
         assert_eq!(files_under(&restored), expected);
-        assert_eq!(fs::read_to_string(restored.join("Pessoal/Projeto A/notas.md")).unwrap(), "olá");
+        assert_eq!(fs::read_to_string(restored.join("Pessoal/.logstudio.json")).unwrap(), "{\"canvas\":1}");
 
         // Uma segunda restauração do mesmo backup não sobrescreve a primeira.
         let again = restore(&path_of(&dest, &info.file).unwrap(), &root).unwrap();
@@ -511,10 +522,9 @@ mod tests {
         let base = temp("inside");
         let root = sample_root(&base);
         let dest = root.join("Backups");
-        let ex = default_exclusions();
-        create(&root, &dest, &ex, "0.0.0", &AtomicBool::new(false), |_| {}).unwrap();
-        let second = create(&root, &dest, &ex, "0.0.0", &AtomicBool::new(false), |_| {}).unwrap();
-        assert_eq!(second.files, 4, "o backup anterior não pode entrar no novo");
+        create(&root, &dest, "0.0.0", &AtomicBool::new(false), |_| {}).unwrap();
+        let second = create(&root, &dest, "0.0.0", &AtomicBool::new(false), |_| {}).unwrap();
+        assert_eq!(second.files, 3, "o backup anterior não pode entrar no novo");
         assert_eq!(list(&dest).len(), 2);
         let _ = fs::remove_dir_all(&base);
     }
@@ -524,7 +534,7 @@ mod tests {
         let base = temp("cancel");
         let root = sample_root(&base);
         let dest = base.join("Backups");
-        let err = create(&root, &dest, &default_exclusions(), "0.0.0", &AtomicBool::new(true), |_| {}).unwrap_err();
+        let err = create(&root, &dest, "0.0.0", &AtomicBool::new(true), |_| {}).unwrap_err();
         assert_eq!(err, "Backup cancelado.");
         assert!(list(&dest).is_empty());
         assert_eq!(stale_tmps(&dest).len(), 1);
@@ -575,9 +585,8 @@ mod tests {
     fn detects_changes() {
         let base = temp("changed");
         let root = sample_root(&base);
-        let ex = default_exclusions();
-        assert!(changed_since(&root, &ex, now_secs() - 3600));
-        assert!(!changed_since(&root, &ex, now_secs() + 3600));
+        assert!(changed_since(&root, now_secs() - 3600));
+        assert!(!changed_since(&root, now_secs() + 3600));
         let _ = fs::remove_dir_all(&base);
     }
 
