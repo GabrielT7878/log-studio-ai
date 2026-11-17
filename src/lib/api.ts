@@ -1,11 +1,41 @@
 // Chamadas ao backend Rust (comandos Tauri).
 import { invoke, type Channel } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { AgentKind, CanvasNodeData } from "./canvasNodes";
 import type { DropPos } from "../hooks/useTreeDrag";
 import type { CanvasView, TreeNode } from "../hooks/useWorkspaceTree";
 
 export interface Settings {
   projectsRoot: string;
+}
+
+/** Configuração e estado do backup (valores já resolvidos pelo backend). */
+export interface BackupStatus {
+  dir: string;
+  auto: boolean;
+  exclusions: string[];
+  /** Segundos desde 1970. */
+  lastBackupAt: number | null;
+  running: boolean;
+  /** O último backup foi interrompido: fazer um agora. */
+  needsRecovery: boolean;
+}
+
+/** Um backup (.zip) da pasta de backups. */
+export interface BackupInfo {
+  file: string;
+  size: number;
+  /** Segundos desde 1970. */
+  createdAt: number;
+  spaces: string[];
+  files: number;
+  /** Arquivos que não puderam ser lidos (travados por outro programa). */
+  skipped: string[];
+}
+
+export interface BackupProgress {
+  done: number;
+  total: number;
 }
 
 /** Espaços de trabalho existentes e o selecionado. */
@@ -71,6 +101,19 @@ export const api = {
   // Configurações
   getSettings: () => invoke<Settings>("get_settings"),
   setProjectsRoot: (path: string) => invoke<Settings>("set_projects_root", { path }),
+
+  // Backup (da raiz inteira)
+  backupStatus: () => invoke<BackupStatus>("backup_status"),
+  backupCreate: () => invoke<BackupInfo>("backup_create"),
+  backupCancel: () => invoke<void>("backup_cancel"),
+  backupList: () => invoke<BackupInfo[]>("backup_list"),
+  backupHasChanges: () => invoke<boolean>("backup_has_changes"),
+  /** Restaura numa pasta nova ao lado da raiz; devolve o caminho dela. */
+  backupRestore: (file: string) => invoke<string>("backup_restore", { file }),
+  setBackupSettings: (changes: { auto?: boolean; dir?: string; exclusions?: string[] }) =>
+    invoke<BackupStatus>("set_backup_settings", changes),
+  onBackupProgress: (cb: (p: BackupProgress) => void): Promise<UnlistenFn> =>
+    listen<BackupProgress>("backup://progress", (e) => cb(e.payload)),
 
   // Espaços de trabalho
   listSpaces: () => invoke<SpacesInfo>("list_spaces"),

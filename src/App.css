@@ -1499,6 +1499,108 @@ html.tree-dragging * {
   color: #ff6b66;
 }
 
+/* Configurações: backup */
+.st-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.st-btn-ghost {
+  background: transparent;
+}
+
+.st-input {
+  width: 330px;
+  height: 33px;
+  padding: 0 10px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: #161618;
+  color: var(--text);
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-size: 12.5px;
+}
+
+.st-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.st-progress {
+  position: relative;
+  height: 22px;
+  margin: -4px 0 14px;
+  border-radius: 6px;
+  background: #1c1c1e;
+  overflow: hidden;
+}
+
+.st-progress-bar {
+  height: 100%;
+  background: rgba(10, 132, 255, 0.45);
+  transition: width 0.2s;
+}
+
+.st-progress span {
+  position: absolute;
+  inset: 0;
+  font-size: 12.5px;
+  line-height: 22px;
+  text-align: center;
+}
+
+.st-ok {
+  margin: -6px 0 14px;
+  font-size: 13px;
+  color: #6fcf73;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.st-backups {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.st-backup {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+}
+
+.st-backup + .st-backup {
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.st-backup-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.st-backup-date {
+  font-size: 14px;
+}
+
+.st-backup-meta {
+  font-size: 12.5px;
+  color: var(--text-dim);
+}
+
+.st-backup-confirm {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .toast,
   .toast.closing {

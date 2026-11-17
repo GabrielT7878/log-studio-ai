@@ -1,9 +1,9 @@
 // Abre o build de testes do app com a porta CDP do WebView2 e uma pasta de projetos temporária;
 // fecha o app e apaga a pasta no fim.
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { CDP_PORT, CDP_URL } from "./constants";
 
@@ -65,11 +65,14 @@ export default async function globalSetup() {
 
   const root = mkdtempSync(join(tmpdir(), "logstudio-e2e-"));
   process.env.LOGSTUDIO_PROJECTS_ROOT = root; // os testes leem daqui
+  // Backups vão para uma pasta temporária (nunca para ~/LogStudio/Backups).
+  const backups = mkdtempSync(join(tmpdir(), "logstudio-e2e-backups-"));
+  process.env.LOGSTUDIO_BACKUP_DIR = backups;
 
   // A porta CDP vem do build de testes (additionalBrowserArgs em src-tauri/tauri.e2e.conf.json):
   // no runner do GitHub o WebView2 ignora a variável WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS.
   const app = spawn(EXE, [], {
-    env: { ...process.env, LOGSTUDIO_PROJECTS_ROOT: root },
+    env: { ...process.env, LOGSTUDIO_PROJECTS_ROOT: root, LOGSTUDIO_BACKUP_DIR: backups },
     stdio: "inherit",
   });
   console.log(`[e2e] app iniciado (pid ${app.pid}), pasta de projetos: ${root}`);
@@ -84,6 +87,11 @@ export default async function globalSetup() {
   return async () => {
     app.kill();
     await new Promise((r) => setTimeout(r, 1000));
-    rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 300 });
+    const rm = (p: string) => rmSync(p, { recursive: true, force: true, maxRetries: 5, retryDelay: 300 });
+    rm(root);
+    rm(backups);
+    // Restaurações vão para pastas novas ao lado da raiz (`<raiz>-restaurado-<data>`).
+    const restored = `${basename(root)}-restaurado-`;
+    for (const name of readdirSync(tmpdir())) if (name.startsWith(restored)) rm(join(tmpdir(), name));
   };
 }
