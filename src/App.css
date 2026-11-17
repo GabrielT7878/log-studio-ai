@@ -1514,23 +1514,6 @@ html.tree-dragging * {
   background: transparent;
 }
 
-.st-input {
-  width: 330px;
-  height: 33px;
-  padding: 0 10px;
-  border-radius: 6px;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  background: #161618;
-  color: var(--text);
-  font-family: "Cascadia Mono", Consolas, monospace;
-  font-size: 12.5px;
-}
-
-.st-input:focus {
-  outline: none;
-  border-color: var(--accent);
-}
-
 .st-progress {
   position: relative;
   height: 22px;
