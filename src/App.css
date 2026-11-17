@@ -4203,6 +4203,7 @@ html.fb-dragging iframe,
 /* O resto do canvas fica escondido (continua montado: os terminais seguem rodando) */
 .canvas.has-fullscreen .canvas-node:not(.fullscreen),
 .canvas.has-fullscreen .group-rect,
+.canvas.has-fullscreen .agent-mark,
 .canvas.has-fullscreen > :is(.toolbar, .canvas-windows, .bottom-controls, .zoom, .marquee-rect, .draw-rect) {
   visibility: hidden;
   pointer-events: none;
@@ -4274,7 +4275,10 @@ html.fb-dragging iframe,
   border: 2px solid #a78bfa;
   border-radius: 12px;
   pointer-events: none;
-  animation: agent-mark 2.4s ease-out forwards;
+  /* Some em 10 s (MARK_MS em useAgentActivity.ts): esmaece nos últimos 0,4 s. */
+  animation:
+    agent-mark 2.4s ease-out forwards,
+    agent-mark-out 0.4s ease-in 9.6s forwards;
 }
 
 .agent-mark-badge {
@@ -4295,6 +4299,12 @@ html.fb-dragging iframe,
 }
 
 /* Aparece, pulsa duas vezes e fica (some quando o usuário clica na janela) */
+@keyframes agent-mark-out {
+  to {
+    opacity: 0;
+  }
+}
+
 @keyframes agent-mark {
   0% {
     opacity: 0;

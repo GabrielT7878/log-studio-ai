@@ -1,10 +1,13 @@
 // Atividade do agente no canvas: registro das ações, destaque nas janelas que ele
-// criou/alterou (fica até o usuário clicar na janela) e desfazer (da mais recente para trás).
+// criou/alterou (some em MARK_MS ou quando o usuário clica na janela) e desfazer (da mais
+// recente para trás).
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { CanvasNodeData } from "../lib/canvasNodes";
 
 const MAX_ACTIONS = 100;
+/** Quanto tempo o destaque fica na janela (o CSS de .agent-mark esmaece no fim). */
+const MARK_MS = 10_000;
 
 export interface AgentAction {
   id: number;
@@ -43,6 +46,7 @@ export function useAgentActivity(projectKey: string | null) {
   const [marks, setMarks] = useState<Record<string, AgentMark>>({});
   const [unseen, setUnseen] = useState(0);
   const nextId = useRef(1);
+  const markTimers = useRef(new Set<number>());
 
   // Trocou de projeto: começa do zero (o histórico é por projeto e por sessão).
   useEffect(() => {
@@ -50,6 +54,11 @@ export function useAgentActivity(projectKey: string | null) {
     setMarks({});
     setUnseen(0);
   }, [projectKey]);
+
+  useEffect(() => {
+    const timers = markTimers.current;
+    return () => timers.forEach((t) => window.clearTimeout(t));
+  }, []);
 
   const mark = useCallback((ids: string[], agent: string) => {
     if (!ids.length) return;
@@ -59,6 +68,18 @@ export function useAgentActivity(projectKey: string | null) {
       for (const id of ids) next[id] = { agent, n };
       return next;
     });
+    // Some sozinho; se o agente mexer de novo na janela antes disso, vale o destaque novo.
+    const timer = window.setTimeout(() => {
+      markTimers.current.delete(timer);
+      setMarks((m) => {
+        const stale = ids.filter((id) => m[id]?.n === n);
+        if (!stale.length) return m;
+        const next = { ...m };
+        for (const id of stale) delete next[id];
+        return next;
+      });
+    }, MARK_MS);
+    markTimers.current.add(timer);
   }, []);
 
   /** O usuário clicou na janela: tira o destaque dela. */
