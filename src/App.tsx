@@ -61,6 +61,8 @@ function App() {
           closing={settings.closing}
           onClose={() => setSettingsOpen(false)}
           onProjectsRootChanged={() => setRootVersion((v) => v + 1)}
+          updater={updater}
+          onRestartForUpdate={restartForUpdate}
         />
       )}
       {newGroup.mounted && (

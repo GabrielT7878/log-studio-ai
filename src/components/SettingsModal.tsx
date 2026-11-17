@@ -12,21 +12,29 @@ import {
   X,
 } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
-import { useCallback, useEffect, useState, type ReactNode } from "react";
-import { api, type BackupInfo, type BackupProgress, type BackupStatus } from "../lib/api";
+import { getVersion } from "@tauri-apps/api/app";
+import { useCallback, useEffect, useMemo, useState, type MouseEvent, type ReactNode } from "react";
+import { api, type BackupInfo, type BackupProgress, type BackupStatus, type ReleaseInfo } from "../lib/api";
 import { flushCanvas } from "../hooks/useCanvasNodes";
+import type { useUpdater } from "../hooks/useUpdater";
+import { renderMarkdown } from "../lib/markdown";
 
-const tabs = [
-  { icon: SlidersHorizontal, label: "Geral", active: true },
+type TabId = "geral" | "atualizacoes";
+
+/** Abas do topo; só as que têm `id` já funcionam (as outras ainda são visuais). */
+const tabs: { icon: typeof Info; label: string; id?: TabId }[] = [
+  { icon: SlidersHorizontal, label: "Geral", id: "geral" },
   { icon: SquareTerminal, label: "Terminal" },
   { icon: Bot, label: "Agentes" },
   { icon: Keyboard, label: "Atalhos" },
   { icon: Waypoints, label: "Wire" },
   { icon: KeyRound, label: "Licença" },
-  { icon: RefreshCw, label: "Atualizações" },
+  { icon: RefreshCw, label: "Atualizações", id: "atualizacoes" },
   { icon: HardDrive, label: "Dados" },
   { icon: Info, label: "Sobre" },
 ];
+
+type Updater = ReturnType<typeof useUpdater>;
 
 const subTabs = ["Sistema", "Tela", "Notificações", "Ambientes", "Git"];
 
@@ -306,83 +314,244 @@ function BackupSection() {
   );
 }
 
+function fmtReleaseDate(iso: string | null) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime())
+    ? ""
+    : d.toLocaleDateString("pt-BR", { day: "2-digit", month: "short", year: "numeric" });
+}
+
+/** Links do changelog não navegam dentro do app (a janela é o próprio app). */
+function blockLinks(e: MouseEvent) {
+  if ((e.target as HTMLElement).closest("a")) e.preventDefault();
+}
+
+function ReleaseBody({ body }: { body: string }) {
+  const html = useMemo(() => (body.trim() ? renderMarkdown(body) : ""), [body]);
+  if (!html) return <div className="st-release-empty">Sem descrição.</div>;
+  return <div className="st-release-body" onClick={blockLinks} dangerouslySetInnerHTML={{ __html: html }} />;
+}
+
+/** Texto do status e botão da linha "versão" da aba Atualizações. */
+function updateStatus(updater: Updater, onRestart: () => void): { status: string; control: ReactNode } {
+  const { state, lastCheck, enabled } = updater;
+  if (!enabled) return { status: "A atualização automática só funciona na versão instalada.", control: null };
+  switch (state.phase) {
+    case "available":
+      return {
+        status: `Versão ${state.version} disponível.`,
+        control: (
+          <button className="st-btn" onClick={updater.download}>
+            Baixar
+          </button>
+        ),
+      };
+    case "downloading": {
+      const pct = state.progress !== null ? ` — ${Math.round(state.progress * 100)}%` : "…";
+      return { status: `Baixando versão ${state.version}${pct}`, control: null };
+    }
+    case "ready":
+      return {
+        status: `Versão ${state.version} pronta. Reiniciar fecha os terminais abertos.`,
+        control: (
+          <button className="st-btn" onClick={onRestart}>
+            Reiniciar para atualizar
+          </button>
+        ),
+      };
+    case "installing":
+      return { status: `Instalando versão ${state.version}…`, control: null };
+    case "error":
+      return {
+        status: `Falha ao atualizar: ${state.message}`,
+        control: (
+          <button className="st-btn" onClick={updater.download}>
+            Tentar de novo
+          </button>
+        ),
+      };
+  }
+  const status =
+    lastCheck.status === "checking"
+      ? "Verificando…"
+      : lastCheck.status === "failed"
+        ? `Não foi possível verificar: ${lastCheck.message}`
+        : lastCheck.status === "latest"
+          ? "Você está na versão mais recente."
+          : "Ainda não verificado.";
+  return {
+    status,
+    control: (
+      <button className="st-btn" onClick={() => void updater.checkNow()} disabled={lastCheck.status === "checking"}>
+        Verificar agora
+      </button>
+    ),
+  };
+}
+
+/** Aba Atualizações: versão instalada, verificar/baixar/reiniciar e changelog do GitHub. */
+function UpdatesTab({ updater, onRestart }: { updater: Updater; onRestart: () => void }) {
+  const [version, setVersion] = useState("");
+  const [releases, setReleases] = useState<ReleaseInfo[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    getVersion()
+      .then(setVersion)
+      .catch(() => {});
+    api
+      .releasesList()
+      .then(setReleases)
+      .catch((e) => setError(String(e)));
+  }, []);
+
+  const { status, control } = updateStatus(updater, onRestart);
+  const newer = releases?.filter((r) => r.newer) ?? [];
+  const older = releases?.filter((r) => !r.newer) ?? [];
+  const renderRelease = (r: ReleaseInfo) => (
+    <li key={r.version} className={`st-release${r.newer ? " newer" : ""}`}>
+      <div className="st-release-head">
+        <span className="st-release-version">v{r.version}</span>
+        {r.newer && <span className="st-badge new">Nova</span>}
+        {r.version === version && <span className="st-badge">Instalada</span>}
+        <span className="st-release-date">{fmtReleaseDate(r.publishedAt)}</span>
+      </div>
+      <ReleaseBody body={r.body} />
+    </li>
+  );
+
+  return (
+    <>
+      <Section title="VERSÃO">
+        <Row title={`Log Studio AI ${version || "…"}`} desc={status} control={control} />
+      </Section>
+      <Section title="NOVIDADES">
+        {error && <div className="st-error">{error}</div>}
+        {!releases && !error && <div className="st-release-empty">Carregando as versões…</div>}
+        {releases && releases.length === 0 && <div className="st-release-empty">Nenhuma versão publicada.</div>}
+        {newer.length > 0 && (
+          <ul className="st-releases" aria-label="Novas versões">
+            {newer.map(renderRelease)}
+          </ul>
+        )}
+        {older.length > 0 && (
+          <>
+            {newer.length > 0 && <h4 className="st-releases-sub">Versões anteriores</h4>}
+            <ul className="st-releases" aria-label="Versões anteriores">
+              {older.map(renderRelease)}
+            </ul>
+          </>
+        )}
+      </Section>
+    </>
+  );
+}
+
 export function SettingsModal({
   onClose,
   closing,
   onProjectsRootChanged,
+  updater,
+  onRestartForUpdate,
 }: {
   onClose: () => void;
   closing: boolean;
   onProjectsRootChanged: () => void;
+  updater: Updater;
+  onRestartForUpdate: () => void;
 }) {
+  const [tab, setTab] = useState<TabId>("geral");
   return (
     <div className={`st-overlay${closing ? " closing" : ""}`}>
       <div className="st-modal">
-        <header className="st-tabs">
-          {tabs.map(({ icon: Icon, label, active }) => (
-            <button key={label} className={`st-tab${active ? " active" : ""}`}>
-              <Icon size={15} />
-              <span>{label}</span>
-            </button>
-          ))}
+        <header className="st-tabs" role="tablist">
+          {tabs.map(({ icon: Icon, label, id }) => {
+            const active = id !== undefined && id === tab;
+            return (
+              <button
+                key={label}
+                role="tab"
+                aria-selected={active}
+                className={`st-tab${active ? " active" : ""}`}
+                onClick={id && (() => setTab(id))}
+              >
+                <Icon size={15} />
+                <span>{label}</span>
+              </button>
+            );
+          })}
           <button className="st-close" onClick={onClose} title="Fechar">
             <X size={16} />
           </button>
         </header>
 
-        <div className="st-content">
-          <div className="st-segmented">
-            {subTabs.map((t, i) => (
-              <button key={t} className={i === 0 ? "active" : ""}>
-                {t}
-              </button>
-            ))}
+        {tab === "atualizacoes" ? (
+          <div className="st-content">
+            <UpdatesTab updater={updater} onRestart={onRestartForUpdate} />
           </div>
-
-          <ProjectsRootSection onChanged={onProjectsRootChanged} />
-
-          <BackupSection />
-
-          <Section title="IDIOMA">
-            <Row title="Idioma" control={<Select value="Padrão do Sistema" />} />
-          </Section>
-
-          <Section title="APARÊNCIA">
-            <Row
-              title="Aparência"
-              desc="Escolha a aparência do Log Studio AI. Sistema segue a configuração do seu sistema operacional."
-              control={<Select value="Escuro" />}
-            />
-            <Row
-              title="Cursor de mão ao passar o mouse"
-              desc="Mostra o cursor de mão sobre botões e menus, como em um navegador web. Desativado, o Log Studio AI usa a seta como os apps nativos."
-              control={<Toggle />}
-            />
-          </Section>
-
-          <Section title="ENERGIA">
-            <Row
-              title="Impedir a suspensão"
-              desc="Impede a suspensão automática para que os agentes continuem trabalhando sem supervisão. No Windows, isso também mantém a tela ligada enquanto a opção estiver valendo."
-              control={<Select value="Enquanto os agentes trabalham" />}
-            />
-          </Section>
-
-          <Section title="ENCERRAMENTO DO APP">
-            <Row
-              title="Solicitar confirmação ao encerrar"
-              desc="Pergunta antes de sair, para que fechar a janela por engano não interrompa os agentes em execução."
-              control={<Toggle />}
-            />
-            <Row title="Tentar restaurar as sessões dos agentes" info control={<Toggle on />} />
-            <Row
-              title="Fechar para a bandeja"
-              desc="Fechar a janela mantém o Log Studio AI em execução na bandeja do sistema. Quando desativado, fechar encerra o app."
-              control={<Toggle />}
-            />
-          </Section>
-        </div>
+        ) : (
+          <GeneralTab onProjectsRootChanged={onProjectsRootChanged} />
+        )}
       </div>
+    </div>
+  );
+}
+
+/** Aba Geral (backup, pasta de projetos e opções ainda visuais). */
+function GeneralTab({ onProjectsRootChanged }: { onProjectsRootChanged: () => void }) {
+  return (
+    <div className="st-content">
+      <div className="st-segmented">
+        {subTabs.map((t, i) => (
+          <button key={t} className={i === 0 ? "active" : ""}>
+            {t}
+          </button>
+        ))}
+      </div>
+
+      <ProjectsRootSection onChanged={onProjectsRootChanged} />
+
+      <BackupSection />
+
+      <Section title="IDIOMA">
+        <Row title="Idioma" control={<Select value="Padrão do Sistema" />} />
+      </Section>
+
+      <Section title="APARÊNCIA">
+        <Row
+          title="Aparência"
+          desc="Escolha a aparência do Log Studio AI. Sistema segue a configuração do seu sistema operacional."
+          control={<Select value="Escuro" />}
+        />
+        <Row
+          title="Cursor de mão ao passar o mouse"
+          desc="Mostra o cursor de mão sobre botões e menus, como em um navegador web. Desativado, o Log Studio AI usa a seta como os apps nativos."
+          control={<Toggle />}
+        />
+      </Section>
+
+      <Section title="ENERGIA">
+        <Row
+          title="Impedir a suspensão"
+          desc="Impede a suspensão automática para que os agentes continuem trabalhando sem supervisão. No Windows, isso também mantém a tela ligada enquanto a opção estiver valendo."
+          control={<Select value="Enquanto os agentes trabalham" />}
+        />
+      </Section>
+
+      <Section title="ENCERRAMENTO DO APP">
+        <Row
+          title="Solicitar confirmação ao encerrar"
+          desc="Pergunta antes de sair, para que fechar a janela por engano não interrompa os agentes em execução."
+          control={<Toggle />}
+        />
+        <Row title="Tentar restaurar as sessões dos agentes" info control={<Toggle on />} />
+        <Row
+          title="Fechar para a bandeja"
+          desc="Fechar a janela mantém o Log Studio AI em execução na bandeja do sistema. Quando desativado, fechar encerra o app."
+          control={<Toggle />}
+        />
+      </Section>
     </div>
   );
 }

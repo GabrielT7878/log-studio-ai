@@ -18,14 +18,26 @@ export type UpdaterState =
   | { phase: "installing"; version: string }
   | { phase: "error"; version: string; message: string };
 
+/** Resultado da última verificação (para a aba Atualizações). */
+export type CheckState =
+  | { status: "never" }
+  | { status: "checking" }
+  | { status: "latest" }
+  | { status: "found" }
+  | { status: "failed"; message: string };
+
 export function useUpdater() {
   const [state, setState] = useState<UpdaterState>({ phase: "idle" });
+  /** Só a versão instalada verifica atualizações. */
+  const [enabled, setEnabled] = useState(false);
+  const [lastCheck, setLastCheck] = useState<CheckState>({ status: "never" });
   const [dismissed, setDismissed] = useState(false);
   const update = useRef<Update | null>(null);
   const busy = useRef(false);
 
   const checkNow = useCallback(async () => {
     if (busy.current || update.current) return;
+    setLastCheck({ status: "checking" });
     try {
       const found = await check();
       if (found) {
@@ -33,8 +45,10 @@ export function useUpdater() {
         setDismissed(false);
         setState({ phase: "available", version: found.version });
       }
+      setLastCheck({ status: found ? "found" : "latest" });
     } catch (e) {
       console.warn("[updater] falha ao verificar atualizações:", e);
+      setLastCheck({ status: "failed", message: String(e) });
     }
   }, []);
 
@@ -46,6 +60,7 @@ export function useUpdater() {
       if (import.meta.env.DEV) return;
       const id = await getIdentifier().catch(() => "");
       if (cancelled || id !== RELEASE_IDENTIFIER) return;
+      setEnabled(true);
       void checkNow();
       timer = window.setInterval(() => void checkNow(), CHECK_EVERY_MS);
     })();
@@ -94,5 +109,14 @@ export function useUpdater() {
     }
   }, []);
 
-  return { state, dismissed, dismiss: () => setDismissed(true), download, installAndRestart };
+  return {
+    state,
+    enabled,
+    lastCheck,
+    checkNow,
+    dismissed,
+    dismiss: () => setDismissed(true),
+    download,
+    installAndRestart,
+  };
 }

@@ -68,11 +68,18 @@ export default async function globalSetup() {
   // Backups vão para uma pasta temporária (nunca para ~/LogStudio/Backups).
   const backups = mkdtempSync(join(tmpdir(), "logstudio-e2e-backups-"));
   process.env.LOGSTUDIO_BACKUP_DIR = backups;
+  // Changelog da aba Atualizações vem de um arquivo local (sem depender da internet/GitHub).
+  const releases = fileURLToPath(new URL("./releases.json", import.meta.url));
 
   // A porta CDP vem do build de testes (additionalBrowserArgs em src-tauri/tauri.e2e.conf.json):
   // no runner do GitHub o WebView2 ignora a variável WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS.
   const app = spawn(EXE, [], {
-    env: { ...process.env, LOGSTUDIO_PROJECTS_ROOT: root, LOGSTUDIO_BACKUP_DIR: backups },
+    env: {
+      ...process.env,
+      LOGSTUDIO_PROJECTS_ROOT: root,
+      LOGSTUDIO_BACKUP_DIR: backups,
+      LOGSTUDIO_RELEASES_FILE: releases,
+    },
     stdio: "inherit",
   });
   console.log(`[e2e] app iniciado (pid ${app.pid}), pasta de projetos: ${root}`);
