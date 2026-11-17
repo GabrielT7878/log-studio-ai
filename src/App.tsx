@@ -4,8 +4,11 @@ import { Canvas, type ActiveProject } from "./components/Canvas";
 import { SettingsModal } from "./components/SettingsModal";
 import { NewGroupModal } from "./components/NewGroupModal";
 import { UpdateBanner } from "./components/UpdateBanner";
+import { BackupCloseOverlay } from "./components/BackupCloseOverlay";
 import { usePresence } from "./hooks/usePresence";
 import { useUpdater } from "./hooks/useUpdater";
+import { useAutoBackup } from "./hooks/useAutoBackup";
+import { useToast } from "./hooks/useToast";
 import "./App.css";
 
 const MODAL_EXIT_MS = 160;
@@ -25,6 +28,8 @@ function App() {
   const newGroup = usePresence(newGroupOpen, MODAL_EXIT_MS);
 
   const updater = useUpdater();
+  const backupToast = useToast(6000);
+  useAutoBackup(backupToast.show);
   // Ao instalar: desmonta o app (os efeitos de limpeza salvam o que estiver pendente) e espera.
   const [closingForUpdate, setClosingForUpdate] = useState(false);
   const restartForUpdate = () =>
@@ -60,6 +65,16 @@ function App() {
       )}
       {newGroup.mounted && (
         <NewGroupModal closing={newGroup.closing} onClose={() => setNewGroupOpen(false)} />
+      )}
+      <BackupCloseOverlay />
+      {backupToast.presence.mounted && (
+        <div
+          className={`toast info${backupToast.presence.closing ? " closing" : ""}`}
+          role="status"
+          onClick={backupToast.hide}
+        >
+          {backupToast.message}
+        </div>
       )}
       {!updater.dismissed && (
         <UpdateBanner

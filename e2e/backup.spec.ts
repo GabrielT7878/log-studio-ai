@@ -1,17 +1,6 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
-import type { Page } from "@playwright/test";
-import { createInTree, expect, spaceDir, test, treeItem, unique } from "./app";
-
-const openSettings = async (page: Page) => {
-  await page.locator("aside").getByTitle("Configurações", { exact: true }).click();
-  await expect(page.locator(".st-modal")).toBeVisible();
-};
-
-const closeSettings = async (page: Page) => {
-  await page.locator(".st-close").click();
-  await expect(page.locator(".st-modal")).toBeHidden();
-};
+import { closeSettings, createInTree, expect, openSettings, spaceDir, test, treeItem, unique } from "./app";
 
 test.describe("Backup", () => {
   test("faz backup pela tela de Configurações e restaura numa pasta nova, com o canvas", async ({ app }) => {

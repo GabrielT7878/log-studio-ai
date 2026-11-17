@@ -67,3 +67,36 @@ export async function openShellTerminal(page: Page, project: string) {
   await page.getByText("Terminal (PowerShell)", { exact: true }).click();
   await expect(page.locator(".xterm-rows").first()).toContainText("PS ", { timeout: 30_000 });
 }
+
+// ---------- Backup ----------
+
+/** Pasta de configuração do build de testes (settings.json, backup.pending). */
+export const E2E_CONFIG_DIR = join(process.env.APPDATA ?? "", "com.logstudio.ai.e2e");
+
+export async function openSettings(page: Page) {
+  await page.locator("aside").getByTitle("Configurações", { exact: true }).click();
+  await expect(page.locator(".st-modal")).toBeVisible();
+}
+
+export async function closeSettings(page: Page) {
+  await page.locator(".st-close").click();
+  await expect(page.locator(".st-modal")).toBeHidden();
+}
+
+/** Liga/desliga o backup automático pela tela de Configurações. */
+export async function setBackupAuto(page: Page, on: boolean) {
+  await openSettings(page);
+  const toggle = page.getByRole("switch", { name: "Backup automático" });
+  await expect(toggle).toHaveAttribute("aria-checked", /true|false/);
+  if ((await toggle.getAttribute("aria-checked")) !== String(on)) await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-checked", String(on));
+  await closeSettings(page);
+}
+
+/** Data de modificação (ms) do backup .zip mais novo da pasta de backups (0 se não houver). */
+export function newestBackupMs() {
+  const dir = process.env.LOGSTUDIO_BACKUP_DIR!;
+  return readdirSync(dir)
+    .filter((n) => n.startsWith("LogStudio-backup-") && n.endsWith(".zip"))
+    .reduce((max, n) => Math.max(max, statSync(join(dir, n)).mtimeMs), 0);
+}

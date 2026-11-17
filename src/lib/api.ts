@@ -115,6 +115,12 @@ export const api = {
   onBackupProgress: (cb: (p: BackupProgress) => void): Promise<UnlistenFn> =>
     listen<BackupProgress>("backup://progress", (e) => cb(e.payload)),
 
+  // Fechar o app (com o backup automático ligado, o X da janela é segurado pelo backend)
+  onCloseRequested: (cb: () => void): Promise<UnlistenFn> => listen("app://close-requested", cb),
+  /** Avisa que o pedido de fechar chegou (sem isso, o backend fecha sozinho em 5 s). */
+  closeAck: () => invoke<void>("close_ack"),
+  appExit: () => invoke<void>("app_exit"),
+
   // Espaços de trabalho
   listSpaces: () => invoke<SpacesInfo>("list_spaces"),
   createSpace: (name: string) => invoke<SpacesInfo>("create_space", { name }),
