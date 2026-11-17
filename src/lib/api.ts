@@ -37,6 +37,19 @@ export interface BackupProgress {
   total: number;
 }
 
+/** Um release publicado no GitHub (changelog). */
+export interface ReleaseInfo {
+  version: string;
+  name: string;
+  /** Descrição em Markdown. */
+  body: string;
+  /** Data ISO 8601 (UTC). */
+  publishedAt: string | null;
+  url: string;
+  /** Mais nova que a versão instalada. */
+  newer: boolean;
+}
+
 /** Espaços de trabalho existentes e o selecionado. */
 export interface SpacesInfo {
   spaces: string[];
@@ -113,6 +126,9 @@ export const api = {
     invoke<BackupStatus>("set_backup_settings", changes),
   onBackupProgress: (cb: (p: BackupProgress) => void): Promise<UnlistenFn> =>
     listen<BackupProgress>("backup://progress", (e) => cb(e.payload)),
+
+  /** Releases do GitHub (changelog), do mais novo para o mais antigo. */
+  releasesList: () => invoke<ReleaseInfo[]>("releases_list"),
 
   // Fechar o app (com o backup automático ligado, o X da janela é segurado pelo backend)
   onCloseRequested: (cb: () => void): Promise<UnlistenFn> => listen("app://close-requested", cb),

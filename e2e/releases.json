@@ -1,0 +1,20 @@
+[
+  {
+    "tag_name": "v99.0.0",
+    "name": "Log Studio AI v99.0.0",
+    "body": "- Novidade de **teste**\n- Outra mudança",
+    "published_at": "2026-12-01T12:00:00Z",
+    "html_url": "https://example.com/v99",
+    "draft": false,
+    "prerelease": false
+  },
+  {
+    "tag_name": "v0.0.1",
+    "name": "Log Studio AI v0.0.1",
+    "body": "- Primeira versão",
+    "published_at": "2026-01-01T12:00:00Z",
+    "html_url": "https://example.com/v001",
+    "draft": false,
+    "prerelease": false
+  }
+]

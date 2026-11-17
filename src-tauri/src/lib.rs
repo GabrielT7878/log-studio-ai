@@ -9,6 +9,7 @@ mod images;
 mod local_site;
 mod portal;
 mod pty;
+mod releases;
 mod settings;
 mod spaces;
 mod usage;
@@ -214,6 +215,12 @@ fn backup_has_changes(app: AppHandle, state: State<'_, AppState>) -> CmdResult<b
 
 /// Restaura o backup `file` (nome dentro da pasta de backups) numa pasta nova
 /// ao lado da raiz. Devolve o caminho da pasta criada.
+/// Releases publicados no GitHub (changelog), do mais novo para o mais antigo.
+#[tauri::command(async)]
+fn releases_list(app: AppHandle) -> CmdResult<Vec<releases::ReleaseInfo>> {
+    releases::fetch(&app.package_info().version.to_string())
+}
+
 #[tauri::command(async)]
 fn backup_restore(app: AppHandle, state: State<'_, AppState>, file: String) -> CmdResult<String> {
     let (root, dest) = backup_paths(&app, &state)?;
@@ -982,6 +989,7 @@ pub fn run() {
             backup_has_changes,
             backup_restore,
             set_backup_settings,
+            releases_list,
             close_ack,
             app_exit,
             list_spaces,
