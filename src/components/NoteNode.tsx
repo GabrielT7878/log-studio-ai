@@ -1,4 +1,5 @@
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { ResizeHandles, startNodeResize, type ResizeDir } from "./ResizeHandles";
 import { FullscreenButton } from "./FullscreenButton";
 import DOMPurify from "dompurify";
 import { ArrowDown } from "lucide-react";
@@ -17,7 +18,7 @@ import {
 import { dragPointer } from "../lib/dragPointer";
 import { registerNoteTextarea, toggleTask } from "../lib/noteFormat";
 import { SmoothCaret } from "./SmoothCaret";
-import { TitleInput } from "./TerminalNode";
+import { fontStepFromKey, TitleInput } from "./TerminalNode";
 
 // Markdown (GFM + quebras de linha). As caixas de tarefa ficam clicáveis.
 const markdown = new Marked({
@@ -57,6 +58,16 @@ function syncScroll(from: HTMLElement | null, to: HTMLElement | null) {
 }
 
 const TO_END_MS = 250;
+
+/** Ícone "M" (Markdown) num quadrado. */
+function MarkdownIcon({ size = 12 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2}>
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+      <path d="M7.5 16V8l4.5 5 4.5-5v8" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
 
 /** Rola `el` até o fim, animado (recalcula o fim a cada quadro). Devolve a função que cancela. */
 function animateToEnd(el: HTMLElement) {
@@ -132,6 +143,21 @@ export function NoteNode({ node, zoom, selected, editingTitle, autoFocus, onSele
     return () => el.removeEventListener("wheel", onWheel);
   }, [node.id]);
 
+  // Ctrl + "+" / "-" com a nota SELECIONADA: mesmo efeito da Ctrl + roda.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const step = fontStepFromKey(e);
+      if (!step || !latest.current.selected) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const { fontSize, onChange: change } = latest.current;
+      const next = Math.min(NOTE_FONT_MAX, Math.max(NOTE_FONT_MIN, fontSize + step));
+      if (next !== fontSize) change(node.id, { fontSize: next });
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [node.id]);
+
   const html = useMemo(
     () => (node.preview ? renderMarkdown(node.text) : ""),
     [node.preview, node.text],
@@ -166,15 +192,9 @@ export function NoteNode({ node, zoom, selected, editingTitle, autoFocus, onSele
     dragPointer(e, (dx, dy) => onChange(node.id, { x: x + dx / zoom, y: y + dy / zoom }));
   };
 
-  const startResize = (e: React.PointerEvent) => {
+  const startResize = (e: React.PointerEvent, dir: ResizeDir) => {
     onSelect(node.id);
-    const { w, h } = node;
-    dragPointer(e, (dx, dy) =>
-      onChange(node.id, {
-        w: Math.max(NOTE_MIN_W, w + dx / zoom),
-        h: Math.max(NOTE_MIN_H, h + dy / zoom),
-      }),
-    );
+    startNodeResize(e, dir, node, zoom, onChange, { min: { w: NOTE_MIN_W, h: NOTE_MIN_H } });
   };
 
   /** Preview: marcar tarefas e abrir links. */
@@ -223,13 +243,31 @@ export function NoteNode({ node, zoom, selected, editingTitle, autoFocus, onSele
             {node.title}
           </span>
         )}
+        <button
+          className={`note-md-btn${node.preview ? " active" : ""}`}
+          role="switch"
+          aria-checked={node.preview}
+          title={node.preview ? "Markdown ligado: clique para editar o texto" : "Markdown desligado: clique para ver formatado"}
+          onPointerDown={(e) => e.stopPropagation()}
+          onDoubleClick={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            e.stopPropagation();
+            onChange(node.id, { preview: !node.preview });
+          }}
+        >
+          <MarkdownIcon />
+          <span className="note-md-track">
+            <span className="note-md-knob" />
+          </span>
+        </button>
         {onToggleFullscreen && (
           <FullscreenButton className="note-fs-btn" size={12} active={fullscreen} onToggle={() => onToggleFullscreen(node.id)} />
         )}
       </div>
 
-      {/* Texto à esquerda; com o M ligado, preview formatado à direita. */}
-      <div className={`note-body${node.preview ? " split" : ""}`}>
+      {/* M desligado: texto. M ligado: só o Markdown formatado (o texto fica escondido, mas
+          montado: a barra de formatação usa o textarea). */}
+      <div className={`note-body${node.preview ? " md" : ""}`}>
         <textarea
           ref={(el) => {
             textRef.current = el;
@@ -271,7 +309,7 @@ export function NoteNode({ node, zoom, selected, editingTitle, autoFocus, onSele
         </button>
       </div>
 
-      <div className="node-resize" title="Redimensionar" onPointerDown={startResize} />
+      <ResizeHandles onStart={startResize} />
     </div>
   );
 }

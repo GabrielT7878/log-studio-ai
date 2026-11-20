@@ -187,6 +187,10 @@ export const api = {
 
   // Navegador de arquivos ("Pasta"): caminhos relativos ao projeto
   fsList: (space: string, projectId: string, rel: string) => invoke<FsEntry[]>("fs_list", { space, projectId, rel }),
+  /** Observa a pasta: mudanças no disco chegam como o evento "fs-changed" (payload = `key`). */
+  fsWatch: (space: string, projectId: string, rel: string, key: string) =>
+    invoke<void>("fs_watch", { space, projectId, rel, key }),
+  fsUnwatch: (key: string) => invoke<void>("fs_unwatch", { key }),
   fsReadText: (space: string, projectId: string, rel: string) =>
     invoke<FsTextFile>("fs_read_text", { space, projectId, rel }),
   fsReadBytes: (space: string, projectId: string, rel: string) =>
@@ -199,6 +203,11 @@ export const api = {
   /** Move um item para dentro de `toDir`; devolve o novo caminho relativo. */
   fsMove: (space: string, projectId: string, from: string, toDir: string) =>
     invoke<string>("fs_move", { space, projectId, from, toDir }),
+  /** Renomeia (mesma pasta); devolve o caminho relativo novo. */
+  fsRename: (space: string, projectId: string, rel: string, name: string) =>
+    invoke<string>("fs_rename", { space, projectId, rel, name }),
+  /** Manda o arquivo/pasta para a Lixeira. */
+  fsDelete: (space: string, projectId: string, rel: string) => invoke<void>("fs_delete", { space, projectId, rel }),
   fsSearch: (space: string, projectId: string, query: string) =>
     invoke<FsSearchHit[]>("fs_search", { space, projectId, query }),
 

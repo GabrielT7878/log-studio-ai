@@ -1,4 +1,5 @@
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { ResizeHandles, startNodeResize, type ResizeDir } from "./ResizeHandles";
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
 import { FullscreenButton } from "./FullscreenButton";
 import {
@@ -244,12 +245,9 @@ export function PortalNode({
     dragPointer(e, (dx, dy) => onChange(node.id, { x: x + dx / zoom, y: y + dy / zoom }));
   };
 
-  const startResize = (e: React.PointerEvent) => {
+  const startResize = (e: React.PointerEvent, dir: ResizeDir) => {
     onSelect(node.id);
-    const { w, h } = node;
-    dragPointer(e, (dx, dy) =>
-      onChange(node.id, { w: Math.max(PORTAL_MIN_W, w + dx / zoom), h: Math.max(PORTAL_MIN_H, h + dy / zoom) }),
-    );
+    startNodeResize(e, dir, node, zoom, onChange, { min: { w: PORTAL_MIN_W, h: PORTAL_MIN_H } });
   };
 
   return (
@@ -359,7 +357,7 @@ export function PortalNode({
         </div>
       </div>
 
-      <div className="node-resize" title="Redimensionar" onPointerDown={startResize} />
+      <ResizeHandles onStart={startResize} />
     </div>
   );
 }

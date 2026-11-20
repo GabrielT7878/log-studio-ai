@@ -1,4 +1,5 @@
 import { convertFileSrc } from "@tauri-apps/api/core";
+import { ResizeHandles, startNodeResize, type ResizeDir } from "./ResizeHandles";
 import { FullscreenButton } from "./FullscreenButton";
 import {
   ExternalLink,
@@ -96,15 +97,9 @@ export function AttachmentNode({ node, space, projectId, zoom, selected, editing
     dragPointer(e, (dx, dy) => onChange(node.id, { x: x + dx / zoom, y: y + dy / zoom }));
   };
 
-  const startResize = (e: React.PointerEvent) => {
+  const startResize = (e: React.PointerEvent, dir: ResizeDir) => {
     onSelect(node.id);
-    const { w, h } = node;
-    dragPointer(e, (dx, dy) =>
-      onChange(node.id, {
-        w: Math.max(ATTACHMENT_MIN_W, w + dx / zoom),
-        h: Math.max(ATTACHMENT_MIN_H, h + dy / zoom),
-      }),
-    );
+    startNodeResize(e, dir, node, zoom, onChange, { min: { w: ATTACHMENT_MIN_W, h: ATTACHMENT_MIN_H } });
   };
 
   const canOpen = kind !== "exec";
@@ -112,7 +107,7 @@ export function AttachmentNode({ node, space, projectId, zoom, selected, editing
 
   return (
     <div
-      className={`canvas-node attachment-node at-${kind}${selected ? " selected" : ""}${fullscreen ? " fullscreen" : ""}`}
+      className={`canvas-node attachment-node at-kind-${kind}${selected ? " selected" : ""}${fullscreen ? " fullscreen" : ""}`}
       data-node-id={node.id}
       style={
         {
@@ -203,7 +198,7 @@ export function AttachmentNode({ node, space, projectId, zoom, selected, editing
         </div>
       </div>
 
-      <div className="node-resize" title="Redimensionar" onPointerDown={startResize} />
+      <ResizeHandles onStart={startResize} />
     </div>
   );
 }

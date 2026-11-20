@@ -1,4 +1,5 @@
 import { ask } from "@tauri-apps/plugin-dialog";
+import { ResizeHandles, startNodeResize, type ResizeDir } from "./ResizeHandles";
 import { FullscreenButton } from "./FullscreenButton";
 import {
   Check,
@@ -17,8 +18,12 @@ import {
   Save,
   Search,
   SlidersHorizontal,
+  Eye,
+  Pencil,
+  Trash2,
   X,
 } from "lucide-react";
+import { listen } from "@tauri-apps/api/event";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { usePresence } from "../hooks/usePresence";
@@ -54,6 +59,8 @@ interface Props {
   fullscreen?: boolean;
   onToggleFullscreen?: (id: string) => void;
   onError: (message: string) => void;
+  /** Abre o arquivo `rel` do projeto numa janela própria no canvas (conforme o tipo). */
+  onViewInCanvas?: (fromId: string, rel: string) => void;
 }
 
 /** Evento global: arquivos do projeto mudaram (todas as janelas Pasta dele recarregam). */
@@ -86,14 +93,19 @@ type Opened =
   | { kind: "error"; message: string };
 
 /** Janela "Pasta": arquivos do projeto à esquerda, editor à direita. */
-export function FolderNode({ node, space, projectId, projectName, zoom, selected, onSelect, onChange, onError, fullscreen = false, onToggleFullscreen }: Props) {
+export function FolderNode({ node, space, projectId, projectName, zoom, selected, onSelect, onChange, onError, fullscreen = false, onToggleFullscreen, onViewInCanvas }: Props) {
   // ---------------- Lista da pasta ----------------
   const [entries, setEntries] = useState<FsEntry[] | null>(null);
   const [reload, setReload] = useState(0);
 
+  // Pasta (ou projeto) que a lista mostra: ao trocar, mostra "carregando"; num recarregar da
+  // mesma pasta, troca a lista sem piscar.
+  const listedDir = useRef<string | null>(null);
   useEffect(() => {
     let alive = true;
-    setEntries(null);
+    const dirKey = `${space}\n${projectId}\n${node.dir}`;
+    if (listedDir.current !== dirKey) setEntries(null);
+    listedDir.current = dirKey;
     api
       .fsList(space, projectId, node.dir)
       .then((list) => alive && setEntries(list))
@@ -108,6 +120,21 @@ export function FolderNode({ node, space, projectId, projectName, zoom, selected
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- recarrega ao mudar de pasta
   }, [space, projectId, node.dir, reload]);
+
+  // Mudanças no disco (terminal, agente, Explorer…): o backend observa a pasta aberta e avisa.
+  useEffect(() => {
+    const key = crypto.randomUUID();
+    let alive = true;
+    const off = listen<string>("fs-changed", (e) => {
+      if (e.payload === key) setReload((r) => r + 1);
+    });
+    api.fsWatch(space, projectId, node.dir, key).catch((e) => alive && console.warn(e));
+    return () => {
+      alive = false;
+      void off.then((f) => f());
+      void api.fsUnwatch(key).catch(() => undefined);
+    };
+  }, [space, projectId, node.dir]);
 
   // Outra janela "Pasta" moveu/criou arquivos neste projeto: recarrega a lista.
   useEffect(() => {
@@ -172,6 +199,10 @@ export function FolderNode({ node, space, projectId, projectName, zoom, selected
   const dirty = opened?.kind === "text" && opened.content !== opened.original;
   const dirtyRef = useRef(dirty);
   dirtyRef.current = dirty;
+  /** Imagem aberta mudou no disco: relê. */
+  const [imageReload, setImageReload] = useState(0);
+  /** Conteúdo novo no disco enquanto há alterações não salvas (null = sem conflito). */
+  const [diskText, setDiskText] = useState<string | null>(null);
 
   // Caminho novo do arquivo aberto depois de mover: mantém o conteúdo (e as alterações).
   const movedTo = useRef<string | null>(null);
@@ -212,7 +243,66 @@ export function FolderNode({ node, space, projectId, projectName, zoom, selected
       alive = false;
       if (url) URL.revokeObjectURL(url);
     };
+  }, [space, projectId, node.openFile, imageReload]);
+
+  // ---- Arquivo aberto alterado fora do app (terminal, agente, outro editor) ----
+  // Observa a pasta do arquivo; a cada mudança relê e compara com o que foi carregado/salvo.
+  // Sem alterações locais: recarrega na hora. Com alterações: pergunta (faixa no topo).
+  const openedRef = useRef(opened);
+  openedRef.current = opened;
+  const onDiskChange = useRef<() => void>(() => {});
+  onDiskChange.current = () => {
+    const rel = node.openFile;
+    const cur = openedRef.current;
+    if (!rel || !cur) return;
+    if (cur.kind === "image") {
+      setImageReload((r) => r + 1);
+      return;
+    }
+    if (cur.kind !== "text") return;
+    api
+      .fsReadText(space, projectId, rel)
+      .then((f) => {
+        const now = openedRef.current;
+        // Igual ao carregado, ou igual ao que está no editor (ex.: o próprio salvar): nada a fazer.
+        if (f.kind !== "text" || now?.kind !== "text" || f.content === now.original || f.content === now.content) return;
+        if (now.content === now.original) {
+          setOpened({ kind: "text", content: f.content, original: f.content });
+          setDiskText(null);
+        } else {
+          setDiskText(f.content);
+        }
+      })
+      .catch(() => undefined); // apagado/movido: a lista mostra; o editor fica como está
+  };
+  useEffect(() => {
+    setDiskText(null);
+    const rel = node.openFile;
+    if (!rel) return;
+    const key = crypto.randomUUID();
+    const off = listen<string>("fs-changed", (e) => {
+      if (e.payload === key) onDiskChange.current();
+    });
+    api.fsWatch(space, projectId, parentOf(rel), key).catch((e) => console.warn(e));
+    return () => {
+      void off.then((f) => f());
+      void api.fsUnwatch(key).catch(() => undefined);
+    };
   }, [space, projectId, node.openFile]);
+
+  /** Conflito: usa a versão do disco (descarta as alterações locais). */
+  const takeDiskVersion = () => {
+    if (diskText === null) return;
+    setOpened({ kind: "text", content: diskText, original: diskText });
+    setDiskText(null);
+  };
+  /** Conflito: mantém as alterações locais (salvar vai sobrescrever a versão do disco). */
+  const keepMine = () => {
+    if (diskText === null) return;
+    const disk = diskText;
+    setOpened((o) => (o?.kind === "text" ? { ...o, original: disk } : o));
+    setDiskText(null);
+  };
 
   /** Confirma descartar alterações não salvas (se houver). */
   const confirmDiscard = async () => {
@@ -242,6 +332,7 @@ export function FolderNode({ node, space, projectId, projectName, zoom, selected
       .fsWriteText(space, projectId, rel, content)
       .then(() => {
         setOpened((o) => (o?.kind === "text" ? { ...o, original: content } : o));
+        setDiskText(null); // salvou por cima da versão do disco
         if (parentOf(rel) === node.dir) setReload((r) => r + 1); // atualiza tamanho/data na lista
       })
       .catch((e) => onError(String(e)));
@@ -365,6 +456,54 @@ export function FolderNode({ node, space, projectId, projectName, zoom, selected
       .catch((e) => onError(String(e)));
   };
 
+  // ---------------- Excluir arquivo/pasta (botão direito na lista) ----------------
+  const [entryMenu, setEntryMenu] = useState<{ x: number; y: number; rel: string; isDir: boolean } | null>(null);
+  const entryPresence = usePresence(!!entryMenu, 110);
+  const [entryShown, setEntryShown] = useState(entryMenu);
+  if (entryMenu && entryMenu !== entryShown) setEntryShown(entryMenu);
+
+  /** Pergunta e manda para a Lixeira. Se o arquivo aberto estava ali, fecha o editor. */
+  const deleteEntry = async (rel: string, isDir: boolean) => {
+    const name = baseName(rel);
+    const ok = await ask(
+      isDir
+        ? `A pasta "${name}" e tudo o que está dentro dela serão movidos para a Lixeira do Windows.`
+        : `O arquivo "${name}" será movido para a Lixeira do Windows.`,
+      { title: `Excluir "${name}"?`, kind: "warning", okLabel: "Excluir", cancelLabel: "Cancelar" },
+    );
+    if (!ok) return;
+    try {
+      await api.fsDelete(space, projectId, rel);
+    } catch (e) {
+      onError(String(e));
+      return;
+    }
+    const open = node.openFile;
+    if (open && (open === rel || (isDir && open.startsWith(`${rel}/`)))) onChange(node.id, { openFile: null });
+    window.dispatchEvent(new CustomEvent(FS_CHANGED, { detail: { space, projectId } }));
+  };
+
+  // ---------------- Renomear arquivo/pasta (botão direito na lista) ----------------
+  const [renaming, setRenaming] = useState<string | null>(null);
+  const finishRename = (rel: string, name: string | null) => {
+    setRenaming(null);
+    const clean = name?.trim();
+    if (!clean || clean === baseName(rel)) return;
+    api
+      .fsRename(space, projectId, rel, clean)
+      .then((to) => {
+        // O arquivo aberto (ou a pasta dele) mudou de nome: segue o caminho novo sem recarregar.
+        const open = node.openFile;
+        if (open && (open === rel || open.startsWith(`${rel}/`))) {
+          const next = to + open.slice(rel.length);
+          movedTo.current = next;
+          onChange(node.id, { openFile: next });
+        }
+        window.dispatchEvent(new CustomEvent(FS_CHANGED, { detail: { space, projectId } }));
+      })
+      .catch((e) => onError(String(e)));
+  };
+
   const createItems: ContextMenuItem[] = [
     { label: "Novo arquivo", icon: FilePlus, onSelect: () => startCreate("file") },
     { label: "Nova pasta", icon: FolderPlus, onSelect: () => startCreate("dir") },
@@ -405,12 +544,9 @@ export function FolderNode({ node, space, projectId, projectName, zoom, selected
     dragPointer(e, (dx, dy) => onChange(node.id, { x: x + dx / zoom, y: y + dy / zoom }));
   };
 
-  const startResize = (e: React.PointerEvent) => {
+  const startResize = (e: React.PointerEvent, dir: ResizeDir) => {
     onSelect(node.id);
-    const { w, h } = node;
-    dragPointer(e, (dx, dy) =>
-      onChange(node.id, { w: Math.max(FOLDER_MIN_W, w + dx / zoom), h: Math.max(FOLDER_MIN_H, h + dy / zoom) }),
-    );
+    startNodeResize(e, dir, node, zoom, onChange, { min: { w: FOLDER_MIN_W, h: FOLDER_MIN_H } });
   };
 
   // ---------------- Render ----------------
@@ -567,6 +703,19 @@ export function FolderNode({ node, space, projectId, projectName, zoom, selected
                   )}
                   {sorted.map((e) => {
                     const rel = join(node.dir, e.name);
+                    if (renaming === rel) {
+                      return (
+                        <div key={e.name} className="fb-row fb-new">
+                          {entryIcon(e.name, e.isDir)}
+                          <NameInput
+                            placeholder="Novo nome"
+                            initial={e.name}
+                            selectStem={!e.isDir}
+                            onDone={(name) => finishRename(rel, name)}
+                          />
+                        </div>
+                      );
+                    }
                     return (
                       <button
                         key={e.name}
@@ -576,6 +725,11 @@ export function FolderNode({ node, space, projectId, projectName, zoom, selected
                           ? { "data-drop-dir": rel, "data-drop-space": space, "data-drop-project": projectId }
                           : {})}
                         onPointerDown={(ev) => startEntryDrag(ev, rel, e.name, e.isDir)}
+                        onContextMenu={(ev) => {
+                          ev.preventDefault();
+                          ev.stopPropagation();
+                          setEntryMenu({ x: ev.clientX, y: ev.clientY, rel, isDir: e.isDir });
+                        }}
                         onClick={() => {
                           if (justDragged.current) return;
                           if (e.isDir) go(rel);
@@ -721,6 +875,17 @@ export function FolderNode({ node, space, projectId, projectName, zoom, selected
           </div>
 
           <div className="fb-body">
+            {diskText !== null && opened?.kind === "text" && (
+              <div className="fb-disk-changed" onPointerDown={(e) => e.stopPropagation()}>
+                <span>O arquivo foi alterado fora do app e você tem alterações não salvas.</span>
+                <button className="fbs-btn" onClick={takeDiskVersion}>
+                  Recarregar do disco
+                </button>
+                <button className="fbs-btn" onClick={keepMine}>
+                  Manter as minhas
+                </button>
+              </div>
+            )}
             {!node.openFile || !opened ? (
               <div className="fb-placeholder">Selecione um arquivo para visualizar</div>
             ) : opened.kind === "loading" ? null : opened.kind === "image" ? (
@@ -760,7 +925,7 @@ export function FolderNode({ node, space, projectId, projectName, zoom, selected
         </div>
       </div>
 
-      <div className="node-resize" title="Redimensionar" onPointerDown={startResize} />
+      <ResizeHandles onStart={startResize} />
 
       {dragGhost &&
         createPortal(
@@ -770,6 +935,28 @@ export function FolderNode({ node, space, projectId, projectName, zoom, selected
           </div>,
           document.body,
         )}
+
+      {entryPresence.mounted && entryShown && (
+        <ContextMenu
+          x={entryShown.x}
+          y={entryShown.y}
+          items={[
+            ...(!entryShown.isDir && onViewInCanvas
+              ? [{ label: "Visualizar no canvas", icon: Eye, onSelect: () => onViewInCanvas(node.id, entryShown.rel) }]
+              : []),
+            { label: "Renomear", icon: Pencil, onSelect: () => setRenaming(entryShown.rel) },
+            {
+              label: "Excluir",
+              icon: Trash2,
+              danger: true,
+              divider: true,
+              onSelect: () => void deleteEntry(entryShown.rel, entryShown.isDir),
+            },
+          ]}
+          closing={entryPresence.closing}
+          onClose={() => setEntryMenu(null)}
+        />
+      )}
 
       {createPresence.mounted && createMenu && (
         <ContextMenu
@@ -797,7 +984,19 @@ export function FolderNode({ node, space, projectId, projectName, zoom, selected
 }
 
 /** Campo do nome de um item novo. Enter confirma; Esc ou clicar fora cancela. */
-function NameInput({ placeholder, onDone }: { placeholder: string; onDone: (name: string | null) => void }) {
+function NameInput({
+  placeholder,
+  initial,
+  selectStem = false,
+  onDone,
+}: {
+  placeholder: string;
+  /** Valor inicial (renomear). */
+  initial?: string;
+  /** Seleciona só o nome sem a extensão (como no Explorer). */
+  selectStem?: boolean;
+  onDone: (name: string | null) => void;
+}) {
   const done = useRef(false);
   const finish = (v: string | null) => {
     if (done.current) return;
@@ -808,7 +1007,13 @@ function NameInput({ placeholder, onDone }: { placeholder: string; onDone: (name
     <input
       className="fb-name-input"
       placeholder={placeholder}
+      defaultValue={initial}
       autoFocus
+      onFocus={(e) => {
+        if (initial === undefined) return;
+        const dot = initial.lastIndexOf(".");
+        e.currentTarget.setSelectionRange(0, selectStem && dot > 0 ? dot : initial.length);
+      }}
       spellCheck={false}
       onPointerDown={(e) => e.stopPropagation()}
       onKeyDown={(e) => {

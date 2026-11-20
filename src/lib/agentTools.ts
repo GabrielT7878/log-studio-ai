@@ -9,6 +9,7 @@ import { attachmentKind, attachmentSize } from "./attachments";
 import { boardPath } from "./boardScenes";
 import {
   AGENTS,
+  ensureUniqueNames,
   BOARD_DEFAULT_H,
   BOARD_DEFAULT_TITLE,
   BOARD_DEFAULT_W,
@@ -543,8 +544,12 @@ function updatePatch(n: CanvasNodeData, args: Record<string, unknown>): NodePatc
 }
 
 /** Cria uma janela: devolve o resumo, a inclusão na lista e a descrição. */
-function created(node: CanvasNodeData, terminalId: string, log: string): ToolOutcome {
-  return { result: summary(node, terminalId), apply: (list) => [...list, node], log };
+function created(node: CanvasNodeData, ctx: ToolContext, log: string): ToolOutcome {
+  // Nome distinto no tipo já aqui, para o agente receber o nome que a janela vai ter.
+  const list = ctx.getNodes();
+  const all = ensureUniqueNames(list, [...list, node]);
+  const named = all[all.length - 1]!;
+  return { result: summary(named, ctx.terminalId), apply: (l) => [...l, named], log };
 }
 
 /** Executa uma ferramenta do agente. Lança ToolError com a mensagem para ele. */
@@ -590,7 +595,7 @@ export async function runTool(
         w,
         h,
       };
-      return created(note, terminalId, `criou a nota "${title}"`);
+      return created(note, ctx, `criou a nota "${title}"`);
     }
 
     case "create_text": {
@@ -619,7 +624,7 @@ export async function runTool(
         w,
         h,
       };
-      return created(node, terminalId, `criou o texto "${clip(text.trim(), 40)}"`);
+      return created(node, ctx, `criou o texto "${clip(text.trim(), 40)}"`);
     }
 
     case "create_portal": {
@@ -640,7 +645,7 @@ export async function runTool(
       const w = Math.max(min.w, num(args, "w") ?? PORTAL_DEFAULT_W);
       const h = Math.max(min.h, num(args, "h") ?? PORTAL_DEFAULT_H);
       const node: PortalNodeData = { id: crypto.randomUUID(), type: "portal", ...target, ...place(ctx, args, w, h), w, h };
-      return created(node, terminalId, `abriu um portal em ${target.file ?? target.url}`);
+      return created(node, ctx, `abriu um portal em ${target.file ?? target.url}`);
     }
 
     case "create_image": {
@@ -653,7 +658,7 @@ export async function runTool(
       const w = size.w * scale;
       const h = size.h * scale;
       const node: ImageNodeData = { id: crypto.randomUUID(), type: "image", file, ...place(ctx, args, w, h), w, h };
-      return created(node, terminalId, "adicionou uma imagem");
+      return created(node, ctx, "adicionou uma imagem");
     }
 
     case "attach_file": {
@@ -671,7 +676,7 @@ export async function runTool(
         w,
         h,
       };
-      return created(node, terminalId, `anexou "${a.name}"`);
+      return created(node, ctx, `anexou "${a.name}"`);
     }
 
     case "create_folder": {
@@ -690,7 +695,7 @@ export async function runTool(
         w,
         h,
       };
-      return created(node, terminalId, `abriu a pasta "${dir || "raiz do projeto"}"`);
+      return created(node, ctx, `abriu a pasta "${dir || "raiz do projeto"}"`);
     }
 
     case "create_script": {
@@ -710,7 +715,7 @@ export async function runTool(
         w,
         h: SCRIPT_COLLAPSED_H,
       };
-      const out = created(node, terminalId, `criou o script "${title}"`);
+      const out = created(node, ctx, `criou o script "${title}"`);
       return {
         ...out,
         result: {
@@ -769,7 +774,7 @@ export async function runTool(
       const w = Math.max(min.w, num(args, "w") ?? BOARD_DEFAULT_W);
       const h = Math.max(min.h, num(args, "h") ?? BOARD_DEFAULT_H);
       const node: BoardNodeData = { id: crypto.randomUUID(), type: "board", title, ...place(ctx, args, w, h), w, h };
-      return created(node, terminalId, `criou o quadro "${title}"`);
+      return created(node, ctx, `criou o quadro "${title}"`);
     }
 
     case "board_draw": {
@@ -896,8 +901,12 @@ export async function runTool(
       const n = find(nodes, str(args, "id", 200));
       const patch = updatePatch(n, args);
       const fields = Object.keys(args).filter((k) => k !== "id");
+      // Renomear para um nome já usado no tipo: numera (o agente recebe o nome final).
+      const after = ensureUniqueNames(nodes, nodes.map((m) => (m.id === n.id ? ({ ...m, ...patch } as CanvasNodeData) : m)));
+      const updated = after.find((m) => m.id === n.id)!;
+      if ("title" in updated && "title" in patch) Object.assign(patch, { title: updated.title });
       return {
-        result: detail({ ...n, ...patch } as CanvasNodeData, terminalId),
+        result: detail(updated, terminalId),
         apply: (list) => list.map((m) => (m.id === n.id ? ({ ...m, ...patch } as CanvasNodeData) : m)),
         log: `alterou ${fields.join(", ")} de "${titleOf(n)}"`,
       };

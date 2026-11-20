@@ -1,4 +1,5 @@
 import { ImageOff } from "lucide-react";
+import { ResizeHandles, startNodeResize, type ResizeDir } from "./ResizeHandles";
 import { FullscreenButton } from "./FullscreenButton";
 import { useEffect, useState } from "react";
 import { imageUrl } from "../lib/canvasImages";
@@ -40,16 +41,9 @@ export function ImageNode({ node, space, projectId, zoom, selected, onSelect, on
     dragPointer(e, (dx, dy) => onChange(node.id, { x: x + dx / zoom, y: y + dy / zoom }));
   };
 
-  const startResize = (e: React.PointerEvent) => {
+  const startResize = (e: React.PointerEvent, dir: ResizeDir) => {
     onSelect(node.id);
-    const { w, h } = node;
-    const ratio = w / h;
-    dragPointer(e, (dx, dy) => {
-      // Usa o eixo que mais cresceu e mantém a proporção.
-      const d = Math.abs(dx) > Math.abs(dy * ratio) ? dx : dy * ratio;
-      const nw = Math.max(IMAGE_MIN, IMAGE_MIN * ratio, w + d / zoom);
-      onChange(node.id, { w: nw, h: nw / ratio });
-    });
+    startNodeResize(e, dir, node, zoom, onChange, { min: { w: IMAGE_MIN, h: IMAGE_MIN }, ratio: node.w / node.h });
   };
 
   return (
@@ -79,7 +73,7 @@ export function ImageNode({ node, space, projectId, zoom, selected, onSelect, on
       {onToggleFullscreen && (
         <FullscreenButton className="img-fs-btn" size={14} active={fullscreen} onToggle={() => onToggleFullscreen(node.id)} />
       )}
-      <div className="node-resize" title="Redimensionar" onPointerDown={startResize} />
+      <ResizeHandles onStart={startResize} />
     </div>
   );
 }
