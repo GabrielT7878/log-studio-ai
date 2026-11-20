@@ -19,9 +19,11 @@ import {
   ChevronDown,
   CircleDot,
   Code,
+  CopyPlus,
   Folder,
   GitBranch,
   Globe,
+  GripVertical,
   Layers,
   Map as MapIcon,
   Menu,
@@ -200,16 +202,6 @@ interface NodeAction {
   popover?: PopoverKind;
 }
 
-/** Ícone "M" (Markdown) num quadrado, como no Maestri. */
-function MarkdownIcon({ size = 17 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
-      <rect x="3" y="3" width="18" height="18" rx="2" />
-      <path d="M7.5 16V8l4.5 5 4.5-5v8" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
-
 interface Selection {
   ids: string[];
   focus: string | null;
@@ -217,6 +209,9 @@ interface Selection {
   group: string | null;
 }
 const EMPTY_SELECTION: Selection = { ids: [], focus: null, group: null };
+
+/** Tipos de janela com nome editável no cabeçalho (Renomear / F2). */
+const RENAMEABLE = new Set<CanvasNodeData["type"]>(["note", "terminal", "script", "attachment", "board"]);
 
 /** Retângulo (mundo) em volta de cada grupo conectado. */
 function groupBoxes(list: CanvasNodeData[]) {
@@ -332,9 +327,21 @@ export function Canvas({
    */
   /** Tira o destaque do agente da janela (ligado depois que `activity` existe). */
   const clearAgentMark = useRef<(id: string) => void>(() => {});
+  /** O clique atual numa janela foi com Shift (marcado no pointerdown, em captura). */
+  const shiftClick = useRef(false);
   const selectNode = useCallback((id: string) => {
     clearAgentMark.current(id); // o usuário clicou na janela: o destaque do agente some
     const cur = selectionRef.current;
+    const shift = shiftClick.current;
+    shiftClick.current = false;
+    if (shift) {
+      // Shift + clique: soma a janela à seleção (para arrastar ou excluir todas juntas).
+      const base = cur.group ? nodesRef.current.filter((n) => n.group === cur.group).map((n) => n.id) : cur.ids;
+      if (base.includes(id)) return; // já está: mantém (Shift + arrastar move todas)
+      // focus null: a barra mostra a de várias selecionadas (Excluir selecionadas), não a de uma.
+      setSelection({ ids: [...base, id], focus: null, group: null });
+      return;
+    }
     if (cur.ids.includes(id) && cur.ids.length > 1) return;
     setSelection({ ids: [id], focus: id, group: null });
   }, []);
@@ -689,20 +696,73 @@ export function Canvas({
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Delete" || e.repeat) return;
-      // Não em campos de texto/terminal, nem com outro modal aberto.
-      const a = document.activeElement as HTMLElement | null;
-      if (a && (a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.isContentEditable || a.closest(".excalidraw"))) return;
       if (document.querySelector(".st-overlay")) return;
       const { ids, group } = selectionRef.current;
       const list = nodesRef.current;
       const sel = group ? list.filter((n) => n.group === group) : list.filter((n) => ids.includes(n.id));
       if (!sel.length) return;
+      // Uma janela só: não em campos de texto/terminal (lá o Delete é do texto). Várias: vale sempre.
+      const a = document.activeElement as HTMLElement | null;
+      const typing = a && (a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.isContentEditable || a.closest(".excalidraw"));
+      if (typing && (sel.length < 2 || a.tagName === "INPUT")) return;
       e.preventDefault();
       setPendingDelete(sel.map((n) => n.id));
       setConfirmDeleteOpen(true);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  // N sem janela selecionada: mostra/recolhe o painel lateral. Só fora de campos de texto,
+  // terminal e quadro (lá o "n" é digitação).
+  const toggleSidebarRef = useRef(onToggleSidebar);
+  toggleSidebarRef.current = onToggleSidebar;
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key.toLowerCase() !== "n" || e.repeat || e.ctrlKey || e.altKey || e.metaKey || e.shiftKey) return;
+      const a = document.activeElement as HTMLElement | null;
+      if (a && (a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.isContentEditable || a.closest(".excalidraw"))) return;
+      if (document.querySelector(".st-overlay, .pw-overlay")) return;
+      const { ids, group } = selectionRef.current;
+      if (ids.length > 0 || group) return;
+      e.preventDefault();
+      toggleSidebarRef.current();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  // Ctrl+Shift+N (com ou sem janela selecionada): mostra/recolhe o painel lateral. Em captura,
+  // para valer também com o foco no terminal, na nota ou no quadro.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.code !== "KeyN" || e.repeat || !(e.ctrlKey || e.metaKey) || !e.shiftKey || e.altKey) return;
+      if (document.querySelector(".st-overlay, .pw-overlay")) return;
+      e.preventDefault();
+      e.stopPropagation();
+      toggleSidebarRef.current();
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, []);
+
+  // F2: renomeia a janela selecionada (as que têm nome editável no cabeçalho). Em captura,
+  // para valer também com o foco no terminal ou no texto da nota.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "F2" || e.repeat || e.ctrlKey || e.altKey || e.metaKey || e.shiftKey) return;
+      if (document.activeElement?.tagName === "INPUT" || document.querySelector(".st-overlay")) return;
+      const { ids, group } = selectionRef.current;
+      if (group || ids.length !== 1) return;
+      const n = nodesRef.current.find((x) => x.id === ids[0]);
+      if (!n || !RENAMEABLE.has(n.type)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      setEditingTitleId(n.id);
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- usa refs
   }, []);
 
   /** Textos da confirmação: nome da janela (ou quantidade) e o que será encerrado/apagado. */
@@ -856,6 +916,59 @@ export function Canvas({
     if (!created.length || !cur || cur.space !== p.space || cur.id !== p.id) return;
     update((list) => [...list, ...created]);
     setSelectedId(created[created.length - 1].id);
+  };
+
+  /**
+   * "Visualizar no canvas" (janela Pasta): abre o arquivo `rel` do projeto numa janela própria,
+   * à direita da janela de origem. .html → Portal; imagem → Imagem (cópia em .logstudio/imagens);
+   * PDF/vídeo/áudio/Office → Anexo (cópia em .logstudio/anexos); o resto → nova janela Pasta
+   * já com o arquivo aberto.
+   */
+  const viewInCanvas = async (fromId: string, rel: string) => {
+    const p = projectRef.current;
+    const from = nodesRef.current.find((n) => n.id === fromId);
+    if (!p || !from) return;
+    const name = rel.split("/").pop() ?? rel;
+    const x = from.x + from.w + 40;
+    const y = from.y;
+    let node: CanvasNodeData;
+    try {
+      if (/\.html?$/i.test(name)) {
+        node = { id: crypto.randomUUID(), type: "portal", url: "", file: rel, x, y, w: PORTAL_DEFAULT_W, h: PORTAL_DEFAULT_H };
+      } else if (IMAGE_FILE_EXT.test(name)) {
+        const bytes = await api.fsReadBytes(p.space, p.id, rel);
+        const file = await api.saveCanvasImage(p.space, p.id, new Uint8Array(bytes), name);
+        const size = await imageSize(await imageUrl(p.space, p.id, file));
+        const scale = Math.min(1, IMAGE_INITIAL_MAX / Math.max(size.w, size.h));
+        node = { id: crypto.randomUUID(), type: "image", file, x, y, w: size.w * scale, h: size.h * scale };
+      } else if (["pdf", "video", "audio", "office"].includes(attachmentKind(name))) {
+        const bytes = await api.fsReadBytes(p.space, p.id, rel);
+        const a = await api.saveAttachment(p.space, p.id, name, new Uint8Array(bytes));
+        const { w, h } = attachmentSize(attachmentKind(a.name));
+        node = { id: crypto.randomUUID(), type: "attachment", file: a.file, name: a.name, size: a.size, x, y, w, h };
+      } else {
+        const dir = rel.includes("/") ? rel.slice(0, rel.lastIndexOf("/")) : "";
+        node = {
+          id: crypto.randomUUID(),
+          type: "folder",
+          ...FOLDER_DEFAULTS,
+          dir,
+          openFile: rel,
+          sidebar: false,
+          x,
+          y,
+          w: FOLDER_DEFAULT_W,
+          h: FOLDER_DEFAULT_H,
+        };
+      }
+    } catch (e) {
+      toast.show(`Não foi possível abrir no canvas: ${e}`);
+      return;
+    }
+    // Trocou de projeto enquanto copiava: não põe no projeto errado.
+    if (projectRef.current?.space !== p.space || projectRef.current?.id !== p.id) return;
+    update((list) => [...list, node]);
+    goToNode(node);
   };
 
   /** Cria cards de anexo (arquivos já copiados para o projeto), centrados em `at`, em cascata. */
@@ -1157,6 +1270,45 @@ export function Canvas({
     el.addEventListener("pointerup", up);
   };
 
+  // ---- Clonar janela (botão direito no cabeçalho) ----
+  const [nodeMenu, setNodeMenu] = useState<{ x: number; y: number; id: string } | null>(null);
+  const [nodeMenuOpen, setNodeMenuOpen] = useState(false);
+  const nodeMenuPresence = usePresence(nodeMenuOpen, 110);
+  const closeNodeMenu = useCallback(() => setNodeMenuOpen(false), []);
+
+  /**
+   * Cria uma cópia independente da janela, um pouco deslocada e fora de grupos. Imagem, anexo e
+   * quadro ganham uma cópia do arquivo (excluir uma das janelas apaga só o arquivo dela).
+   * Terminal clonado abre uma sessão nova; script clonado não começa rodando.
+   */
+  const cloneNode = async (id: string) => {
+    const src = nodesRef.current.find((n) => n.id === id);
+    const p = projectRef.current;
+    if (!src || !p) return;
+    // Mesmo nome: o `update` numera ("Nota" → "Nota 2"), pois nomes são únicos por tipo.
+    const copy = { ...src, id: crypto.randomUUID(), group: undefined, x: src.x + 32, y: src.y + 32 } as CanvasNodeData;
+    try {
+      if (src.type === "image" && copy.type === "image") {
+        const bytes = await api.readCanvasImage(p.space, p.id, src.file);
+        copy.file = await api.saveCanvasImage(p.space, p.id, new Uint8Array(bytes), src.file);
+      } else if (src.type === "attachment" && copy.type === "attachment") {
+        const bytes = await api.fsReadBytes(p.space, p.id, `.logstudio/anexos/${src.file}`);
+        const a = await api.saveAttachment(p.space, p.id, src.name, new Uint8Array(bytes));
+        Object.assign(copy, { file: a.file, name: a.name, size: a.size });
+      } else if (src.type === "board") {
+        const scene = await loadScene({ space: p.space, projectId: p.id, id: src.id });
+        setScene({ space: p.space, projectId: p.id, id: copy.id }, structuredClone(scene), { immediate: true });
+      }
+    } catch (e) {
+      toast.show(`Não foi possível clonar a janela: ${e}`);
+      return;
+    }
+    // Trocou de projeto enquanto copiava o arquivo: não põe a cópia no projeto errado.
+    if (projectRef.current?.space !== p.space || projectRef.current?.id !== p.id) return;
+    update((list) => [...list, copy]);
+    setSelectedId(copy.id);
+  };
+
   const createTerminal = (agent: AgentKind, rect: ScreenRect) => {
     const w = toWorld(rect);
     const node: TerminalNodeData = {
@@ -1382,12 +1534,6 @@ export function Canvas({
       { icon: List, label: "Lista", onClick: () => formatNote(note, "list") },
       { icon: Braces, label: "Bloco de código", onClick: () => formatNote(note, "codeblock") },
       { icon: Image, label: "Imagem" },
-      {
-        icon: MarkdownIcon,
-        label: note.preview ? "Ocultar preview" : "Preview ao lado (Markdown)",
-        active: note.preview,
-        onClick: () => patchNode(note.id, { preview: !note.preview }),
-      },
       { icon: Ellipsis, label: "Mais" },
     ],
     [{ icon: GitBranch, label: "Git" }],
@@ -1528,6 +1674,23 @@ export function Canvas({
     fitToggle.current = { before: now, fitted: pan.getView() };
   };
 
+  // Ctrl+Shift+M: minimapa (igual ao botão; de novo volta para onde estava). Em captura, para
+  // valer também com o foco no terminal, na nota ou no quadro. Em tela cheia não faz nada.
+  const fitAllRef = useRef(fitAll);
+  fitAllRef.current = fitAll;
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.code !== "KeyM" || e.repeat || !(e.ctrlKey || e.metaKey) || !e.shiftKey || e.altKey) return;
+      if (document.querySelector(".st-overlay, .pw-overlay")) return;
+      if (fullscreenRef.current) return;
+      e.preventDefault();
+      e.stopPropagation();
+      fitAllRef.current();
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, []);
+
   /** Seleciona a janela e leva a visualização até ela, centralizada. */
   // ---- Tela cheia de uma janela ----
   /** Janela em tela cheia, se ainda existir no projeto (texto solto não entra). */
@@ -1552,7 +1715,8 @@ export function Canvas({
   const toggleFullscreen = (id: string) => setFullscreen(fullscreenRef.current === id ? null : id);
 
   // Atalhos (em captura: passam na frente do terminal e do Excalidraw):
-  // Ctrl+Shift+F entra/sai da tela cheia da janela selecionada; Ctrl+Tab / Ctrl+Shift+Tab trocam.
+  // Ctrl+Shift+F entra/sai da tela cheia da janela selecionada (Alt+roda troca de janela;
+  // Ctrl+Tab é da roda de projetos, em ProjectWheel).
   const setFullscreenRef = useRef(setFullscreen);
   setFullscreenRef.current = setFullscreen;
 
@@ -1619,12 +1783,6 @@ export function Canvas({
         e.preventDefault();
         e.stopPropagation();
         setFullscreenRef.current(target);
-        return;
-      }
-      if (e.key === "Tab" && active && list.length > 1) {
-        e.preventDefault();
-        e.stopPropagation();
-        cycleFullscreen(e.shiftKey ? -1 : 1);
       }
     };
     window.addEventListener("keydown", onKey, true);
@@ -1689,6 +1847,162 @@ export function Canvas({
     }
     pan.centerOn({ x: n.x, y: n.y, w, h });
   };
+
+  // ---- Lista "Janelas": arrastar um item muda a ordem (a ordem das janelas no projeto) ----
+  // O item arrastado segue o mouse; os outros deslizam para abrir o espaço onde ele vai entrar.
+  /** from/to: posição de origem e de destino; dy: deslocamento do mouse; step: altura de um item. */
+  const [listDrag, setListDrag] = useState<{ id: string; from: number; to: number; dy: number; step: number } | null>(
+    null,
+  );
+  const listDragMoved = useRef(false);
+  const startListDrag = (e: React.PointerEvent<HTMLButtonElement>, id: string) => {
+    if (e.button !== 0) return;
+    const listEl = e.currentTarget.parentElement;
+    if (!listEl) return;
+    const items = [...listEl.querySelectorAll<HTMLElement>(".cw-item")];
+    const from = items.indexOf(e.currentTarget);
+    if (from < 0) return;
+    // Tudo em coordenadas do conteúdo da lista (somam a rolagem): continua certo quando ela rola.
+    const box = listEl.getBoundingClientRect();
+    const toContent = (clientY: number) => clientY - box.top + listEl.scrollTop;
+    // Centros de antes do arraste: o destino é calculado sobre eles (os itens deslocados não contam).
+    const mids = items.map((el) => {
+      const r = el.getBoundingClientRect();
+      return toContent(r.top + r.height / 2);
+    });
+    const step = items.length > 1 ? Math.abs(mids[1]! - mids[0]!) : e.currentTarget.offsetHeight;
+    const y0 = toContent(e.clientY);
+    let lastY = e.clientY;
+    let active = false;
+    let raf = 0;
+    listDragMoved.current = false;
+
+    const slotAt = (dy: number) => {
+      const c = mids[from]! + dy; // centro do item arrastado agora
+      let to = 0;
+      for (let i = 0; i < mids.length; i++) if (c > mids[i]!) to = i;
+      return c < mids[0]! ? 0 : to;
+    };
+    const dyAt = (clientY: number) =>
+      Math.max(
+        mids[0]! - mids[from]! - step / 2,
+        Math.min(mids[mids.length - 1]! - mids[from]! + step / 2, toContent(clientY) - y0),
+      );
+    const refresh = () => {
+      const dy = dyAt(lastY);
+      setListDrag({ id, from, to: slotAt(dy), dy, step });
+    };
+
+    // Rolagem automática: perto da borda de cima/baixo, rola (mais rápido quanto mais perto).
+    const EDGE = 36;
+    const MAX_SPEED = 14; // px por quadro
+    const autoScroll = () => {
+      raf = 0;
+      if (!active) return;
+      const r = listEl.getBoundingClientRect();
+      let v = 0;
+      if (lastY < r.top + EDGE) v = -MAX_SPEED * Math.min(1, (r.top + EDGE - lastY) / EDGE);
+      else if (lastY > r.bottom - EDGE) v = MAX_SPEED * Math.min(1, (lastY - (r.bottom - EDGE)) / EDGE);
+      if (v === 0) return;
+      const before = listEl.scrollTop;
+      listEl.scrollTop += v;
+      if (listEl.scrollTop !== before) refresh();
+      raf = requestAnimationFrame(autoScroll);
+    };
+
+    const move = (ev: PointerEvent) => {
+      lastY = ev.clientY;
+      if (!active && Math.abs(ev.clientY - e.clientY) < 4) return;
+      active = true;
+      listDragMoved.current = true;
+      refresh();
+      if (!raf) raf = requestAnimationFrame(autoScroll);
+    };
+    const end = (ev: PointerEvent) => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", end);
+      window.removeEventListener("pointercancel", end);
+      if (raf) cancelAnimationFrame(raf);
+      const wasActive = active;
+      active = false;
+      setListDrag(null);
+      if (!wasActive || ev.type === "pointercancel") return;
+      const to = slotAt(dyAt(ev.clientY));
+      if (to === from) return;
+      update((list) => {
+        const i = list.findIndex((x) => x.id === id);
+        if (i < 0) return list;
+        const next = [...list];
+        const [item] = next.splice(i, 1);
+        next.splice(to, 0, item!);
+        return next;
+      });
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", end);
+    window.addEventListener("pointercancel", end);
+  };
+
+  /** Deslocamento de cada item da lista durante o arraste. */
+  const listShift = (i: number) => {
+    const d = listDrag;
+    if (!d) return 0;
+    if (i === d.from) return d.dy;
+    if (d.from < i && i <= d.to) return -d.step;
+    if (d.to <= i && i < d.from) return d.step;
+    return 0;
+  };
+
+  // Selecionou (só) um terminal ou uma nota — clique, Ctrl+1…9, lista "Janelas": o teclado já
+  // vai para ele, sem precisar clicar de novo. No próximo quadro: o mousedown do clique no
+  // cabeçalho tiraria o foco se fosse antes.
+  useEffect(() => {
+    const { ids, focus, group } = selection;
+    if (ids.length > 1 || group) {
+      // Várias janelas: tira o foco do texto/terminal, para Delete e atalhos valerem para a seleção.
+      const a = document.activeElement as HTMLElement | null;
+      if (a?.tagName === "TEXTAREA" && a.closest(".canvas-node")) a.blur();
+      return;
+    }
+    if (ids.length !== 1 || !focus) return;
+    const n = nodesRef.current.find((x) => x.id === focus);
+    if (!n || (n.type !== "terminal" && n.type !== "note")) return;
+    const raf = requestAnimationFrame(() => {
+      const active = document.activeElement as HTMLElement | null;
+      if (active?.tagName === "INPUT") return; // nome em edição no cabeçalho
+      if (n.type === "terminal") {
+        terminals.focus(n.id);
+        return;
+      }
+      const ta = document.querySelector<HTMLTextAreaElement>(
+        `.canvas-node[data-node-id="${CSS.escape(n.id)}"] .note-text`,
+      );
+      // Escondido (modo Markdown) ou já com o foco (clicou no texto): deixa como está.
+      if (ta && ta.offsetParent !== null && active !== ta) ta.focus({ preventScroll: true });
+    });
+    return () => cancelAnimationFrame(raf);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- só quando a seleção muda
+  }, [selection.focus, selection.ids.length, selection.group]);
+
+  // Ctrl+1…9: vai para a 1ª…9ª janela da lista "Janelas" (seleciona e centraliza, igual ao
+  // clique na lista). Em captura, para valer também com o foco no terminal/nota/quadro.
+  const goToNodeRef = useRef(goToNode);
+  goToNodeRef.current = goToNode;
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey || e.repeat) return;
+      const m = /^(?:Digit|Numpad)([1-9])$/.exec(e.code);
+      if (!m) return;
+      if (document.querySelector(".st-overlay, .pw-overlay") || fullscreenRef.current) return;
+      const n = nodesRef.current[Number(m[1]) - 1];
+      if (!n) return;
+      e.preventDefault();
+      e.stopPropagation();
+      goToNodeRef.current(n);
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, []);
 
   // ---- Clique no fundo do canvas ----
   const onCanvasPointerDown = (e: React.PointerEvent<HTMLElement>) => {
@@ -1834,6 +2148,18 @@ export function Canvas({
         tool === "text" ? " tool-text" : ""
       }${spacePan ? " space-pan" : ""}${fsNode ? " has-fullscreen" : ""}`}
       onPointerDown={onCanvasPointerDown}
+      onContextMenu={(e) => {
+        // Botão direito no cabeçalho de uma janela: menu com "Clonar".
+        const target = e.target as HTMLElement;
+        if (target.closest("input, textarea")) return;
+        if (!target.closest(".term-header, .note-header, .fb-header, .pt-header, .at-header, .bd-header, .sc-bar")) return;
+        const id = target.closest<HTMLElement>(".canvas-node")?.dataset.nodeId;
+        if (!id) return;
+        e.preventDefault();
+        selectNode(id);
+        setNodeMenu({ x: e.clientX, y: e.clientY, id });
+        setNodeMenuOpen(true);
+      }}
       onDoubleClick={(e) => {
         // Duplo clique no cabeçalho de uma janela: centraliza (igual à lista de janelas).
         if (fsNode) return; // em tela cheia não há o que centralizar
@@ -1845,6 +2171,7 @@ export function Canvas({
         if (n) goToNode(n);
       }}
       onPointerDownCapture={(e) => {
+        shiftClick.current = e.button === 0 && e.shiftKey && !!(e.target as HTMLElement).closest(".canvas-node");
         // Espaço + clique numa janela não selecionada: move o canvas em vez de agir na janela.
         if (e.button !== 0 || !spaceHeld.current) return;
         const node = (e.target as HTMLElement).closest(".canvas-node");
@@ -1897,7 +2224,9 @@ export function Canvas({
                 projectId={project.id}
                 zoom={n.id === fsNode?.id || n.id === fsLeaving?.id ? 1 : pan.zoom}
                 selected={selection.ids.includes(n.id)}
+                editingTitle={n.id === editingTitleId}
                 onSelect={selectNode}
+                onTitleDone={finishTitle}
                 fullscreen={n.id === fsNode?.id || n.id === fsLeaving?.id}
                 onToggleFullscreen={toggleFullscreen}
                 onChange={changeNode}
@@ -1946,6 +2275,7 @@ export function Canvas({
                 onToggleFullscreen={toggleFullscreen}
                 onChange={changeNode}
                 onError={toast.show}
+                onViewInCanvas={(fromId, rel) => void viewInCanvas(fromId, rel)}
               />
             ) : n.type === "text" ? (
               <TextNode
@@ -2219,16 +2549,34 @@ export function Canvas({
             <ChevronDown size={14} className="cw-chevron" />
           </button>
           <div className="cw-body">
-            <div className="cw-list">
-          {nodes.map((n) => (
+            <div className={`cw-list${listDrag ? " sorting" : ""}`}>
+          {nodes.map((n, i) => (
             <button
               key={n.id}
-              className={`cw-item${selection.ids.includes(n.id) ? " active" : ""}`}
-              title={`Ir para "${windowLabel(n)}"`}
-              onClick={() => goToNode(n)}
+              className={`cw-item${selection.ids.includes(n.id) ? " active" : ""}${
+                listDrag?.id === n.id ? " dragging" : ""
+              }`}
+              style={listDrag ? { transform: `translateY(${listShift(i)}px)` } : undefined}
+              title={`Ir para "${windowLabel(n)}" (arraste para reordenar)`}
+              onPointerDown={(e) => startListDrag(e, n.id)}
+              onClick={() => {
+                if (listDragMoved.current) {
+                  listDragMoved.current = false; // foi arraste, não clique
+                  return;
+                }
+                goToNode(n);
+              }}
             >
+              <span className="cw-grip" aria-hidden="true">
+                <GripVertical size={13} />
+              </span>
               <span className="cw-icon">{windowIcon(n)}</span>
               <span className="cw-label">{windowLabel(n)}</span>
+              {i < 9 && (
+                <kbd className="cw-key" title={`Ctrl+${i + 1}`}>
+                  {i + 1}
+                </kbd>
+              )}
             </button>
           ))}
             </div>
@@ -2334,7 +2682,7 @@ export function Canvas({
             />
           </button>
         </div>
-        <button className="pill-btn" title="Ver todas as janelas (clique de novo para voltar)" onClick={fitAll} disabled={!project || nodes.length === 0}>
+        <button className="pill-btn" title="Ver todas as janelas — Ctrl+Shift+M (de novo para voltar)" onClick={fitAll} disabled={!project || nodes.length === 0}>
           <MapIcon size={18} />
         </button>
         <div className="zoom">
@@ -2447,6 +2795,36 @@ export function Canvas({
           items={createItems(createMenu.rect)}
           closing={createPresence.closing}
           onClose={closeCreateMenu}
+        />
+      )}
+
+      {/* Menu do cabeçalho de uma janela (botão direito) */}
+      {nodeMenuPresence.mounted && nodeMenu && (
+        <ContextMenu
+          x={nodeMenu.x}
+          y={nodeMenu.y}
+          items={[
+            { label: "Clonar", icon: CopyPlus, onSelect: () => void cloneNode(nodeMenu.id) },
+            ...(RENAMEABLE.has(nodesRef.current.find((n) => n.id === nodeMenu.id)?.type ?? "text")
+              ? [{ label: "Renomear", icon: SquarePen, onSelect: () => setEditingTitleId(nodeMenu.id) }]
+              : []),
+            {
+              label: "Excluir",
+              icon: Trash2,
+              danger: true,
+              divider: true,
+              // Mesma confirmação da tecla Delete (encerra terminal / apaga arquivo).
+              // Janela dentro de uma seleção de várias: exclui todas as selecionadas.
+              onSelect: () => {
+                const { ids, group } = selectionRef.current;
+                const sel = group ? nodesRef.current.filter((n) => n.group === group).map((n) => n.id) : ids;
+                setPendingDelete(sel.length > 1 && sel.includes(nodeMenu.id) ? sel : [nodeMenu.id]);
+                setConfirmDeleteOpen(true);
+              },
+            },
+          ]}
+          closing={nodeMenuPresence.closing}
+          onClose={closeNodeMenu}
         />
       )}
 

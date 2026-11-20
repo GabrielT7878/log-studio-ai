@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ActiveProject } from "../components/Canvas";
 import { api } from "../lib/api";
-import { sanitizeNodes, type CanvasNodeData } from "../lib/canvasNodes";
+import { ensureUniqueNames, sanitizeNodes, type CanvasNodeData } from "../lib/canvasNodes";
 
 const SAVE_DELAY_MS = 400;
 
@@ -63,7 +63,8 @@ export function useCanvasNodes(project: ActiveProject | null) {
     (fn: (nodes: CanvasNodeData[]) => CanvasNodeData[]) => {
       const p = projectRef.current;
       if (!p) return;
-      const next = fn(nodesRef.current);
+      // Janelas criadas/clonadas/renomeadas (pelo usuário ou agente) ganham nome distinto no tipo.
+      const next = ensureUniqueNames(nodesRef.current, fn(nodesRef.current));
       nodesRef.current = next;
       setNodes(next);
       cache.current.set(`${p.space}\n${p.id}`, next);

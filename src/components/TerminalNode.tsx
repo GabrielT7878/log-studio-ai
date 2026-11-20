@@ -1,4 +1,5 @@
 import { CircleDot, Folder, SquareTerminal } from "lucide-react";
+import { ResizeHandles, startNodeResize, type ResizeDir } from "./ResizeHandles";
 import { FullscreenButton } from "./FullscreenButton";
 import { useEffect, useLayoutEffect, useRef } from "react";
 import {
@@ -95,6 +96,21 @@ export function TerminalNode({
     return () => el.removeEventListener("wheel", onWheel, { capture: true });
   }, [node.id]);
 
+  // Ctrl + "+" / "-" com o terminal SELECIONADO: mesmo efeito da Ctrl + roda.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const step = fontStepFromKey(e);
+      if (!step || !latest.current.selected) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const { fontSize, onChange: change } = latest.current;
+      const next = Math.min(TERM_FONT_MAX, Math.max(TERM_FONT_MIN, fontSize + step));
+      if (next !== fontSize) change(node.id, { fontSize: next });
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [node.id]);
+
   // Tela cheia: colunas/linhas acompanham o tamanho (ao entrar, ao sair e se o app mudar de tamanho).
   const wasFullscreen = useRef(fullscreen);
   useEffect(() => {
@@ -118,18 +134,9 @@ export function TerminalNode({
     dragPointer(e, (dx, dy) => onChange(node.id, { x: x + dx / zoom, y: y + dy / zoom }));
   };
 
-  const startResize = (e: React.PointerEvent) => {
+  const startResize = (e: React.PointerEvent, dir: ResizeDir) => {
     onSelect(node.id);
-    const { w, h } = node;
-    dragPointer(
-      e,
-      (dx, dy) =>
-        onChange(node.id, {
-          w: Math.max(NODE_MIN_W, w + dx / zoom),
-          h: Math.max(NODE_MIN_H, h + dy / zoom),
-        }),
-      () => terminals.fit(node.id),
-    );
+    startNodeResize(e, dir, node, zoom, onChange, { min: { w: NODE_MIN_W, h: NODE_MIN_H }, onEnd: () => terminals.fit(node.id) });
   };
 
   return (
@@ -173,12 +180,24 @@ export function TerminalNode({
         <SquareTerminal size={9} />
       </div>
 
-      <div className="node-resize" title="Redimensionar" onPointerDown={startResize} />
+      <ResizeHandles onStart={startResize} />
     </div>
   );
 }
 
 /** Edição do título no cabeçalho. Enter/blur confirma, Esc cancela. */
+/**
+ * Ctrl + "+" / "-" (teclado principal ou numérico) → +1 / -1 no tamanho da fonte; 0 = outra tecla.
+ * Fora do campo de nome em edição (lá as teclas são do texto).
+ */
+export function fontStepFromKey(e: KeyboardEvent): number {
+  if (!(e.ctrlKey || e.metaKey) || e.altKey) return 0;
+  if ((document.activeElement as HTMLElement | null)?.tagName === "INPUT") return 0;
+  if (e.code === "Equal" || e.code === "NumpadAdd" || e.key === "+") return 1;
+  if (e.code === "Minus" || e.code === "NumpadSubtract" || e.key === "-") return -1;
+  return 0;
+}
+
 export function TitleInput({ value, onDone }: { value: string; onDone: (title: string | null) => void }) {
   const done = useRef(false);
   const finish = (v: string | null) => {

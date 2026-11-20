@@ -13,6 +13,7 @@ mod releases;
 mod settings;
 mod spaces;
 mod usage;
+mod watcher;
 mod workspace;
 
 use agent_bridge::Bridge;
@@ -706,6 +707,26 @@ fn fs_list(state: State<'_, AppState>, space: String, project_id: String, rel: S
     files::list(&dir, &rel)
 }
 
+/// Observa a pasta `rel` do projeto: mudanças viram o evento `fs-changed` com `key`.
+#[tauri::command(async)]
+fn fs_watch(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    watches: State<'_, watcher::Watches>,
+    space: String,
+    project_id: String,
+    rel: String,
+    key: String,
+) -> CmdResult<()> {
+    let dir = files::resolve(&project_dir(&state, &space, &project_id)?, &rel)?;
+    watches.watch(app, key, &dir)
+}
+
+#[tauri::command]
+fn fs_unwatch(watches: State<'_, watcher::Watches>, key: String) {
+    watches.unwatch(&key);
+}
+
 #[tauri::command(async)]
 fn fs_read_text(
     state: State<'_, AppState>,
@@ -763,6 +784,20 @@ fn fs_move(
 ) -> CmdResult<String> {
     let root = project_dir(&state, &space, &project_id)?;
     files::move_item(&root, &from, &to_dir)
+}
+
+/// Renomeia o arquivo/pasta `rel` do projeto; devolve o caminho relativo novo.
+#[tauri::command(async)]
+fn fs_rename(state: State<'_, AppState>, space: String, project_id: String, rel: String, name: String) -> CmdResult<String> {
+    let root = project_dir(&state, &space, &project_id)?;
+    files::rename(&root, &rel, &name)
+}
+
+/// Manda o arquivo/pasta `rel` do projeto para a Lixeira.
+#[tauri::command(async)]
+fn fs_delete(state: State<'_, AppState>, space: String, project_id: String, rel: String) -> CmdResult<()> {
+    let root = project_dir(&state, &space, &project_id)?;
+    files::delete(&root, &rel)
 }
 
 #[tauri::command(async)]
@@ -966,6 +1001,7 @@ pub fn run() {
             app.manage(PtyManager::default());
             app.manage(BackupState::default());
             app.manage(CloseState::default());
+            app.manage(watcher::Watches::default());
             let bridge = Bridge::start(app.handle().clone())
                 .map_err(|e| eprintln!("{e}"))
                 .ok();
@@ -1025,6 +1061,10 @@ pub fn run() {
             read_canvas_image,
             delete_canvas_image,
             fs_list,
+            fs_delete,
+            fs_rename,
+            fs_watch,
+            fs_unwatch,
             fs_read_text,
             fs_read_bytes,
             fs_write_text,

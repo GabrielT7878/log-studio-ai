@@ -144,6 +144,49 @@ pub fn write_text(root: &Path, rel: &str, content: &str) -> Res<()> {
     fs::write(&path, content).map_err(|e| format!("Não foi possível salvar: {e}"))
 }
 
+/// Arquivo/pasta do projeto que pode ser excluído: não a raiz nem a pasta interna `.logstudio`.
+fn deletable(root: &Path, rel: &str) -> Res<PathBuf> {
+    let clean = rel.trim_matches(|c| c == '/' || c == '\\');
+    if clean.is_empty() {
+        return Err("Não é possível excluir a pasta do projeto por aqui.".into());
+    }
+    let first = clean.split(['/', '\\']).next().unwrap_or_default();
+    if first.eq_ignore_ascii_case(".logstudio") {
+        return Err("Essa pasta é do Log Studio e não pode ser excluída por aqui.".into());
+    }
+    let path = resolve(root, clean)?;
+    if !path.exists() {
+        return Err("O item não existe mais.".into());
+    }
+    Ok(path)
+}
+
+/// Renomeia o arquivo/pasta `rel` (mesma pasta) e devolve o caminho relativo novo.
+/// Nunca sobrescreve; só mudar maiúsculas/minúsculas é permitido.
+pub fn rename(root: &Path, rel: &str, raw_name: &str) -> Res<String> {
+    let src = deletable(root, rel)?;
+    let name = crate::workspace::validate_name(raw_name)?;
+    let clean = rel.trim_matches(|c| c == '/' || c == '\\');
+    let current = src.file_name().and_then(|n| n.to_str()).unwrap_or_default().to_string();
+    let parent = clean.rsplit_once(['/', '\\']).map(|(p, _)| p.to_string()).unwrap_or_default();
+    let to = if parent.is_empty() { name.clone() } else { format!("{parent}/{name}") };
+    if current == name {
+        return Ok(to);
+    }
+    let dst = src.with_file_name(&name);
+    if dst.exists() && !crate::workspace::same_name(&current, &name) {
+        return Err(format!("Já existe um item chamado \"{name}\" aqui."));
+    }
+    fs::rename(&src, &dst).map_err(|e| format!("Não foi possível renomear: {e}"))?;
+    Ok(to)
+}
+
+/// Move o arquivo ou a pasta `rel` para a Lixeira (nunca apaga direto).
+pub fn delete(root: &Path, rel: &str) -> Res<()> {
+    let path = deletable(root, rel)?;
+    crate::workspace::trash_dir(&path)
+}
+
 /// Cria um arquivo vazio ou uma pasta dentro de `dir` e devolve o caminho relativo.
 /// Nunca sobrescreve: se o nome já existir, dá erro.
 pub fn create(root: &Path, dir: &str, raw_name: &str, is_dir: bool) -> Res<String> {
@@ -258,6 +301,29 @@ mod tests {
         fs::write(dir.join("node_modules/pkg/main.js"), "x").unwrap();
         fs::write(dir.join("bin.dat"), [0u8, 1, 2, 3]).unwrap();
         dir
+    }
+
+    #[test]
+    fn rename_renomeia_sem_sobrescrever() {
+        let root = temp_root("rename");
+        assert_eq!(rename(&root, "src/main.rs", "app.rs").unwrap(), "src/app.rs");
+        assert!(root.join("src/app.rs").is_file());
+        assert!(rename(&root, "src/app.rs", "../fora.rs").is_err());
+        fs::write(root.join("src/outro.rs"), "x").unwrap();
+        assert!(rename(&root, "src/app.rs", "outro.rs").is_err());
+        assert_eq!(rename(&root, "src/app.rs", "App.rs").unwrap(), "src/App.rs");
+        assert_eq!(rename(&root, "README.md", "LEIA.md").unwrap(), "LEIA.md");
+        assert!(rename(&root, ".logstudio", "x").is_err());
+    }
+
+    #[test]
+    fn delete_recusa_raiz_pasta_interna_e_inexistente() {
+        let root = temp_root("delete");
+        for bad in ["", "/", ".logstudio", ".logstudio/imagens", ".LogStudio", "nao-existe.txt", "../x"] {
+            assert!(deletable(&root, bad).is_err(), "{bad}");
+        }
+        assert_eq!(deletable(&root, "src/main.rs").unwrap(), root.join("src").join("main.rs"));
+        assert_eq!(deletable(&root, "src/sub/").unwrap(), root.join("src").join("sub"));
     }
 
     #[test]

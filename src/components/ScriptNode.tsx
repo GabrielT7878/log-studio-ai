@@ -1,4 +1,5 @@
 import { ChevronDown, ChevronUp, Play, ShieldAlert, Square } from "lucide-react";
+import { ResizeHandles, startNodeResize, type ResizeDir } from "./ResizeHandles";
 import { useCallback, useLayoutEffect, useRef, useSyncExternalStore } from "react";
 import {
   SCRIPT_COLLAPSED_H,
@@ -92,19 +93,14 @@ export function ScriptNode({
     dragPointer(e, (dx, dy) => onChange(node.id, { x: x + dx / zoom, y: y + dy / zoom }));
   };
 
-  const startResize = (e: React.PointerEvent) => {
+  const startResize = (e: React.PointerEvent, dir: ResizeDir) => {
     onSelect(node.id);
-    const { w, h } = node;
-    dragPointer(
-      e,
-      (dx, dy) =>
-        onChange(node.id, {
-          w: Math.max(SCRIPT_MIN_W, w + dx / zoom),
-          // Recolhido: só a largura muda.
-          ...(node.expanded ? { h: Math.max(SCRIPT_MIN_OPEN_H, h + dy / zoom) } : {}),
-        }),
-      () => terminals.fit(node.id),
-    );
+    startNodeResize(e, dir, node, zoom, onChange, {
+      min: { w: SCRIPT_MIN_W, h: SCRIPT_MIN_OPEN_H },
+      // Recolhido: só a largura muda.
+      lockH: !node.expanded,
+      onEnd: () => terminals.fit(node.id),
+    });
   };
 
   const mainButton = pendingApproval ? (
@@ -191,7 +187,7 @@ export function ScriptNode({
 
       {showLogs && <div className="term-body sc-body" ref={bodyRef} onPointerDown={() => terminals.focus(node.id)} />}
 
-      <div className="node-resize" title="Redimensionar" onPointerDown={startResize} />
+      <ResizeHandles onStart={startResize} />
     </div>
   );
 }

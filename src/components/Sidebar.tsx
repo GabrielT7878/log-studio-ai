@@ -1,6 +1,7 @@
 import {
   AlarmClock,
   ChevronDown,
+  ClipboardCopy,
   Folder,
   FolderOpen,
   FolderPlus,
@@ -15,6 +16,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { usePresence } from "../hooks/usePresence";
+import { api } from "../lib/api";
 import { useSpaces } from "../hooks/useSpaces";
 import { useToast } from "../hooks/useToast";
 import { useTreeDrag } from "../hooks/useTreeDrag";
@@ -24,6 +26,7 @@ import type { ActiveProject } from "./Canvas";
 import { ConfirmDeleteModal } from "./ConfirmDeleteModal";
 import { ContextMenu, type ContextMenuItem } from "./ContextMenu";
 import { NameModal } from "./NameModal";
+import { ProjectWheel, touchRecentProject } from "./ProjectWheel";
 import { WorkspaceTree } from "./WorkspaceTree";
 
 // Limites de largura da sidebar (px)
@@ -96,6 +99,8 @@ export function Sidebar({
     // Logo depois de trocar/renomear o espaço, `tree` ainda é a do espaço anterior (com os
     // cards lidos quando ela carregou): espera a árvore do espaço atual chegar.
     if (space && treeSpace !== space) return;
+    // Histórico de recentes da roda de projetos (Ctrl+Tab).
+    if (space && active) touchRecentProject(space, active.id);
     onActiveRef.current(
       active && space
         ? {
@@ -113,6 +118,20 @@ export function Sidebar({
 
   const listRef = useRef<HTMLElement>(null);
   const drag = useTreeDrag(listRef, moveNode);
+
+  /** Copia o caminho completo da pasta/projeto no disco (raiz\espaço\Pasta\Projeto). */
+  const copyPath = async (id: string) => {
+    const space = spaces.current;
+    if (!space) return;
+    try {
+      const { projectsRoot } = await api.getSettings();
+      const path = [projectsRoot.replace(/[\\/]+$/, ""), space, ...id.split("/")].join("\\");
+      // Com espaço (ou outro caractere especial do terminal): entre aspas, para colar e usar direto.
+      await navigator.clipboard.writeText(/[\s&()^;,'`$]/.test(path) ? `"${path}"` : path);
+    } catch (e) {
+      toast.show(`Não foi possível copiar o caminho: ${e}`);
+    }
+  };
 
   // ---- Pesquisa ----
   const [query, setQuery] = useState("");
@@ -331,8 +350,10 @@ export function Sidebar({
             onRename={rename}
             onFolderMenu={(e, f) =>
               openMenu(e, [
-                { label: "Nova pasta", icon: FolderPlus, onSelect: () => newFolder(f.id) },
+                { label: "Copiar caminho", icon: ClipboardCopy, onSelect: () => void copyPath(f.id) },
+                { label: "Nova pasta", icon: FolderPlus, divider: true, onSelect: () => newFolder(f.id) },
                 { label: "Novo projeto", icon: SquarePlus, onSelect: () => newProject(f.id) },
+                { label: "Abrir no Explorer", icon: FolderOpen, divider: true, onSelect: () => openInExplorer(f.id) },
                 { label: "Renomear", icon: Pencil, onSelect: () => startRename(f.id) },
                 {
                   label: "Excluir",
@@ -344,6 +365,8 @@ export function Sidebar({
             }
             onProjectMenu={(e, p) =>
               openMenu(e, [
+                { label: "Copiar caminho", icon: ClipboardCopy, onSelect: () => void copyPath(p.id) },
+                { label: "Abrir no Explorer", icon: FolderOpen, onSelect: () => openInExplorer(p.id) },
                 { label: "Renomear", icon: Pencil, onSelect: () => startRename(p.id) },
                 {
                   label: "Excluir",
@@ -351,7 +374,6 @@ export function Sidebar({
                   danger: true,
                   onSelect: () => askDelete({ kind: "node", node: p }),
                 },
-                { label: "Abrir no Explorer", icon: FolderOpen, onSelect: () => openInExplorer(p.id) },
               ])
             }
           />
@@ -431,6 +453,14 @@ export function Sidebar({
           }}
         />
       )}
+
+      {/* Roda de troca de projeto (Ctrl+Tab) */}
+      <ProjectWheel
+        space={treeSpace === spaces.current ? spaces.current : null}
+        tree={tree}
+        activeId={active?.id}
+        onSelect={selectProject}
+      />
 
       {/* Aviso de erro */}
       {toast.presence.mounted &&

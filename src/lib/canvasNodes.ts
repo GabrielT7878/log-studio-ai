@@ -595,3 +595,75 @@ export function sanitizeNodes(raw: unknown): CanvasNodeData[] {
     return [];
   });
 }
+
+// ---- Nomes únicos (por tipo) ----
+
+/** Nome mostrado das janelas que têm nome próprio (null = tipo sem nome: pasta, portal, imagem, texto). */
+export function windowName(n: CanvasNodeData): string | null {
+  switch (n.type) {
+    case "terminal":
+    case "note":
+    case "script":
+    case "board":
+      return n.title;
+    case "attachment":
+      return n.title || n.name;
+    default:
+      return null;
+  }
+}
+
+function withName(n: CanvasNodeData, name: string): CanvasNodeData {
+  return n.type === "terminal" || n.type === "note" || n.type === "script" || n.type === "board" || n.type === "attachment"
+    ? { ...n, title: name }
+    : n;
+}
+
+const nameKey = (s: string) => s.trim().toLocaleLowerCase();
+
+/** `name` se estiver livre; senão "Nome 2", "Nome 3"… (um "Nome 2" já ocupado continua de 3). */
+export function uniqueName(name: string, taken: Set<string>): string {
+  if (!taken.has(nameKey(name))) return name;
+  const m = /^(.*?)\s+(\d+)$/.exec(name.trim());
+  const root = m ? m[1] : name.trim();
+  let i = m ? Number(m[2]) + 1 : 2;
+  while (taken.has(nameKey(`${root} ${i}`))) i++;
+  return `${root} ${i}`;
+}
+
+/**
+ * Janelas novas ou renomeadas (de `prev` para `next`) recebem nome distinto das outras do
+ * mesmo tipo. Repetidos que já existiam ficam como estão.
+ */
+export function ensureUniqueNames(prev: CanvasNodeData[], next: CanvasNodeData[]): CanvasNodeData[] {
+  const prevById = new Map(prev.map((n) => [n.id, n]));
+  const changed = next.filter((n) => {
+    const name = windowName(n);
+    if (name === null) return false;
+    const old = prevById.get(n.id);
+    return !old || windowName(old) !== name;
+  });
+  if (changed.length === 0) return next;
+
+  const changedIds = new Set(changed.map((n) => n.id));
+  const taken = new Map<string, Set<string>>();
+  const takenOf = (type: string) => {
+    let s = taken.get(type);
+    if (!s) taken.set(type, (s = new Set()));
+    return s;
+  };
+  for (const n of next) {
+    const name = windowName(n);
+    if (name !== null && !changedIds.has(n.id)) takenOf(n.type).add(nameKey(name));
+  }
+
+  const renamed = new Map<string, CanvasNodeData>();
+  for (const n of changed) {
+    const set = takenOf(n.type);
+    const name = windowName(n)!;
+    const free = uniqueName(name, set);
+    set.add(nameKey(free));
+    if (free !== name) renamed.set(n.id, withName(n, free));
+  }
+  return renamed.size ? next.map((n) => renamed.get(n.id) ?? n) : next;
+}
