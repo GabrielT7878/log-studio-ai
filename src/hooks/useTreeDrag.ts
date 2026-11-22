@@ -15,6 +15,9 @@ function computeTarget(x: number, y: number, dragId: string, list: HTMLElement):
   const el = document.elementFromPoint(x, y) as HTMLElement | null;
   if (!el || !list.contains(el)) return null;
 
+  // Seção Arquivados: não recebe itens arrastados (use "Arquivar" no menu).
+  if (el.closest("[data-archive-section]")) return null;
+
   // Uma pasta não pode ser solta dentro dela mesma nem das suas subpastas.
   if (el.closest(`[data-folder-id="${CSS.escape(dragId)}"]`)) return null;
 

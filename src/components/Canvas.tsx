@@ -2589,7 +2589,14 @@ export function Canvas({
           <BookOpen size={16} />
         </button>
         <span className="divider" />
-        <button className="icon-btn" title="Código">
+        <button
+          className="icon-btn"
+          title="Abrir no VS Code"
+          disabled={!project}
+          onClick={() =>
+            project && api.openInVscode(project.space, project.id).catch((e) => toast.show(String(e)))
+          }
+        >
           <Code size={16} />
         </button>
         <button className="icon-btn" title="Mais">

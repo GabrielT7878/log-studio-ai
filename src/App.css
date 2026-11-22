@@ -4991,3 +4991,38 @@ html.fb-dragging iframe,
 .canvas-node > .node-resize-se {
   z-index: 6;
 }
+
+/* Seção Arquivados (fim da árvore do espaço) */
+.archive-section {
+  margin-top: 10px;
+  padding-top: 6px;
+  border-top: 1px solid var(--bg-active);
+}
+
+.archive-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 30px;
+  padding: 0 10px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.archive-header:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.archive-empty {
+  padding: 6px 12px 10px 33px;
+  font-size: 12px;
+  color: var(--text-faint);
+}

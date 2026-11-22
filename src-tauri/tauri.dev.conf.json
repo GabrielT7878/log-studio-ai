@@ -8,7 +8,19 @@
         "title": "Log Studio AI (Dev)",
         "width": 1440,
         "height": 900,
-        "decorations": false
+        "decorations": false,
+        "visible": false
+      },
+      {
+        "label": "splash",
+        "url": "splashscreen.html",
+        "title": "Log Studio AI (Dev)",
+        "width": 420,
+        "height": 260,
+        "decorations": false,
+        "resizable": false,
+        "maximizable": false,
+        "center": true
       }
     ]
   },

@@ -38,6 +38,13 @@ export interface FolderNode {
 
 export type TreeNode = FolderNode | ProjectNode;
 
+/** Pasta da raiz do espaço com os itens arquivados (igual a ARCHIVE_FOLDER do backend). */
+export const ARCHIVE_FOLDER = "Arquivados";
+
+/** É a pasta de arquivados (na raiz do espaço)? */
+export const isArchiveFolder = (n: TreeNode): n is FolderNode =>
+  n.kind === "folder" && !n.id.includes("/") && n.name.toLowerCase() === ARCHIVE_FOLDER.toLowerCase();
+
 export function findNode(nodes: TreeNode[], id: string): TreeNode | undefined {
   for (const n of nodes) {
     if (n.id === id) return n;
@@ -189,6 +196,28 @@ export function useWorkspaceTree(
     [space, attempt],
   );
 
+  /** Move o item para a pasta Arquivados do espaço. */
+  const archiveNode = useCallback(
+    async (id: string) => {
+      if (!space) return;
+      await flushCanvas(); // o caminho do projeto aberto pode mudar
+      const t = await attempt(space, api.archive(space, id));
+      if (t) setTree(t);
+    },
+    [space, attempt],
+  );
+
+  /** Devolve o item arquivado à pasta de onde saiu (ou à raiz). */
+  const unarchiveNode = useCallback(
+    async (id: string) => {
+      if (!space) return;
+      await flushCanvas();
+      const t = await attempt(space, api.unarchive(space, id));
+      if (t) setTree(t);
+    },
+    [space, attempt],
+  );
+
   /** Reordena ou muda de pasta (move o diretório no disco). */
   const moveNode = useCallback(
     async (dragId: string, target: DropTarget) => {
@@ -229,6 +258,8 @@ export function useWorkspaceTree(
     rename,
     toggleFolder,
     deleteNode,
+    archiveNode,
+    unarchiveNode,
     moveNode,
     selectProject,
     openInExplorer,

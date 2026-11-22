@@ -1,6 +1,9 @@
 import {
   AlarmClock,
+  Archive,
+  ArchiveRestore,
   ChevronDown,
+  ChevronRight,
   ClipboardCopy,
   Folder,
   FolderOpen,
@@ -20,7 +23,14 @@ import { api } from "../lib/api";
 import { useSpaces } from "../hooks/useSpaces";
 import { useToast } from "../hooks/useToast";
 import { useTreeDrag } from "../hooks/useTreeDrag";
-import { findActiveProject, useWorkspaceTree, type TreeNode } from "../hooks/useWorkspaceTree";
+import {
+  findActiveProject,
+  isArchiveFolder,
+  useWorkspaceTree,
+  type FolderNode,
+  type ProjectNode,
+  type TreeNode,
+} from "../hooks/useWorkspaceTree";
 import { filterTree } from "../lib/filterTree";
 import type { ActiveProject } from "./Canvas";
 import { ConfirmDeleteModal } from "./ConfirmDeleteModal";
@@ -34,6 +44,11 @@ const SIDEBAR_MIN = 240;
 const SIDEBAR_MAX = 520;
 const SIDEBAR_DEFAULT = 352;
 const clampWidth = (w: number) => Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, w));
+
+/** Tempo mínimo da splash screen na tela (ms). */
+const SPLASH_MIN_MS = 1000;
+/** A splash só é fechada uma vez (trocar de espaço depois não a chama de novo). */
+let splashClosed = false;
 
 /** O que vai para a Lixeira: um item da árvore ou um espaço de trabalho inteiro. */
 type DeleteTarget = { kind: "node"; node: TreeNode } | { kind: "space"; name: string };
@@ -85,10 +100,27 @@ export function Sidebar({
     rename,
     toggleFolder,
     deleteNode,
+    archiveNode,
+    unarchiveNode,
     moveNode,
     selectProject,
     openInExplorer,
   } = useWorkspaceTree(spaces.current, rootVersion, toast.show);
+
+  // Splash screen: mostra o andamento e fecha quando a primeira árvore carregar.
+  useEffect(() => {
+    if (splashClosed) return;
+    void api
+      .splashStatus(spaces.current ? `Abrindo ${spaces.current}…` : "Carregando espaços…")
+      .catch(() => {});
+  }, [spaces.current]);
+  useEffect(() => {
+    if (!loaded || splashClosed) return;
+    splashClosed = true;
+    // Fica pelo menos SPLASH_MIN_MS na tela (desde o início da página) para não piscar.
+    const wait = Math.max(0, SPLASH_MIN_MS - performance.now());
+    setTimeout(() => void api.splashDone().catch(() => {}), wait);
+  }, [loaded]);
 
   // Avisa o App qual projeto está aberto (o canvas mostra o projeto dele).
   const active = useMemo(() => findActiveProject(tree), [tree]);
@@ -136,7 +168,10 @@ export function Sidebar({
   // ---- Pesquisa ----
   const [query, setQuery] = useState("");
   const searching = query.trim() !== "";
-  const visibleTree = useMemo(() => filterTree(tree, query), [tree, query]);
+  // A pasta Arquivados sai da árvore principal e aparece numa seção própria no fim.
+  const archived = useMemo(() => tree.find(isArchiveFolder), [tree]);
+  const mainTree = useMemo(() => tree.filter((n) => !isArchiveFolder(n)), [tree]);
+  const visibleTree = useMemo(() => filterTree(mainTree, query), [mainTree, query]);
   // Durante a pesquisa, arrastar fica desativado.
   const noDrag = useMemo(() => ({ dragId: null, target: null, start: () => {} }), []);
 
@@ -158,6 +193,19 @@ export function Sidebar({
     setToDelete(target);
     setConfirmOpen(true);
   };
+
+  /** Menu de um item dentro da seção Arquivados. */
+  const archivedMenu = (n: FolderNode | ProjectNode): ContextMenuItem[] => [
+    { label: "Desarquivar", icon: ArchiveRestore, onSelect: () => void unarchiveNode(n.id) },
+    { label: "Copiar caminho", icon: ClipboardCopy, divider: true, onSelect: () => void copyPath(n.id) },
+    { label: "Abrir no Explorer", icon: FolderOpen, onSelect: () => openInExplorer(n.id) },
+    {
+      label: "Excluir",
+      icon: Trash2,
+      danger: true,
+      onSelect: () => askDelete({ kind: "node", node: n }),
+    },
+  ];
 
   // ---- Modal de nome do espaço (novo / renomear) ----
   const [nameTarget, setNameTarget] = useState<NameTarget | null>(null);
@@ -355,6 +403,7 @@ export function Sidebar({
                 { label: "Novo projeto", icon: SquarePlus, onSelect: () => newProject(f.id) },
                 { label: "Abrir no Explorer", icon: FolderOpen, divider: true, onSelect: () => openInExplorer(f.id) },
                 { label: "Renomear", icon: Pencil, onSelect: () => startRename(f.id) },
+                { label: "Arquivar", icon: Archive, onSelect: () => void archiveNode(f.id) },
                 {
                   label: "Excluir",
                   icon: Trash2,
@@ -368,6 +417,7 @@ export function Sidebar({
                 { label: "Copiar caminho", icon: ClipboardCopy, onSelect: () => void copyPath(p.id) },
                 { label: "Abrir no Explorer", icon: FolderOpen, onSelect: () => openInExplorer(p.id) },
                 { label: "Renomear", icon: Pencil, onSelect: () => startRename(p.id) },
+                { label: "Arquivar", icon: Archive, onSelect: () => void archiveNode(p.id) },
                 {
                   label: "Excluir",
                   icon: Trash2,
@@ -380,11 +430,41 @@ export function Sidebar({
           {/* Indicador de "soltar no fim da lista" */}
           {drag.dragId && drag.target?.id === null && <div className="tree-drop-end" />}
 
+          {/* Seção Arquivados (recolhida por padrão; some durante a pesquisa) */}
+          {archived && !searching && (
+            <div className="archive-section" data-archive-section>
+              <button
+                className="archive-header"
+                aria-expanded={archived.expanded}
+                onClick={() => toggleFolder(archived.id)}
+              >
+                {archived.expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+                <Archive size={14} />
+                <span>Arquivados ({archived.children.length})</span>
+              </button>
+              {archived.expanded &&
+                (archived.children.length === 0 ? (
+                  <div className="archive-empty">Nenhum item arquivado.</div>
+                ) : (
+                  <WorkspaceTree
+                    tree={archived.children}
+                    editingId={editingId}
+                    dnd={noDrag}
+                    onToggle={toggleFolder}
+                    onSelectProject={selectProject}
+                    onRename={rename}
+                    onFolderMenu={(e, f) => openMenu(e, archivedMenu(f))}
+                    onProjectMenu={(e, p) => openMenu(e, archivedMenu(p))}
+                  />
+                ))}
+            </div>
+          )}
+
           {searching && visibleTree.length === 0 && (
             <div className="tree-empty-root">Nenhum resultado para “{query.trim()}”.</div>
           )}
 
-          {loaded && !searching && tree.length === 0 && (
+          {loaded && !searching && mainTree.length === 0 && (
             <div className="tree-empty-root">
               Nenhum projeto ainda.
               <br />

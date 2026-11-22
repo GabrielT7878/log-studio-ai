@@ -14,6 +14,8 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub const META_FILE: &str = ".logstudio.json";
+/// Pasta da raiz do espaço onde ficam os itens arquivados (a barra lateral a mostra à parte).
+pub const ARCHIVE_FOLDER: &str = "Arquivados";
 const META_VERSION: u32 = 1;
 const DEFAULT_FOLDER_NAME: &str = "Nova pasta";
 const DEFAULT_PROJECT_NAME: &str = "Novo projeto";
@@ -69,6 +71,9 @@ pub struct Node {
     /// Cards do canvas do projeto (terminais etc.). Formato definido pelo frontend.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub canvas: Option<serde_json::Value>,
+    /// Item arquivado: id da pasta de onde saiu (`Some("")` = raiz do espaço).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub archived_from: Option<String>,
 }
 
 /// Conteúdo do `.logstudio.json`.
@@ -96,6 +101,8 @@ struct MetaNode {
     view: Option<View>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     canvas: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    archived_from: Option<String>,
 }
 
 fn is_false(b: &bool) -> bool {
@@ -148,6 +155,7 @@ fn to_meta(nodes: &[Node]) -> Vec<MetaNode> {
             active: n.active,
             view: n.view.clone(),
             canvas: n.canvas.clone(),
+            archived_from: n.archived_from.clone(),
         })
         .collect()
 }
@@ -206,6 +214,7 @@ fn make_node(dir: &Path, name: String, kind: Kind, meta: Option<&MetaNode>) -> N
                 active: false,
                 view: None,
                 canvas: None,
+                archived_from: meta.and_then(|m| m.archived_from.clone()),
                 name,
             }
         }
@@ -221,6 +230,7 @@ fn make_node(dir: &Path, name: String, kind: Kind, meta: Option<&MetaNode>) -> N
             active: meta.is_some_and(|m| m.active),
             view: meta.and_then(|m| m.view.clone()),
             canvas: meta.and_then(|m| m.canvas.clone()),
+            archived_from: meta.and_then(|m| m.archived_from.clone()),
             name,
         },
     }
@@ -521,6 +531,80 @@ pub fn move_node(root: &Path, drag_id: &str, target_id: Option<&str>, pos: DropP
     Ok(nodes)
 }
 
+/// Nome da pasta de arquivados na raiz (o do disco, se já existir com outra caixa).
+fn archive_name(nodes: &[Node]) -> String {
+    nodes
+        .iter()
+        .find(|n| same_name(&n.name, ARCHIVE_FOLDER))
+        .map_or_else(|| ARCHIVE_FOLDER.to_string(), |n| n.name.clone())
+}
+
+/// O item está dentro da pasta de arquivados?
+fn in_archive(archive: &str, id: &str) -> bool {
+    id == archive || id.starts_with(&format!("{archive}/"))
+}
+
+/// Move o item para a pasta de arquivados (criada se não existir), guardando de onde saiu.
+pub fn archive(root: &Path, id: &str) -> Res<Vec<Node>> {
+    let mut nodes = load(root)?;
+    let archive = archive_name(&nodes);
+    if in_archive(&archive, id) {
+        return Err("O item já está arquivado.".into());
+    }
+    let name = find(&nodes, id).ok_or("Item não encontrado.")?.name.clone();
+
+    // Garante a pasta de arquivados como pasta (um diretório criado por fora entra como projeto).
+    fs::create_dir_all(root.join(&archive))
+        .map_err(|e| format!("Não foi possível criar “{archive}”: {e}"))?;
+    let folder = make_node(root, archive.clone(), Kind::Folder, None);
+    match nodes.iter().position(|n| n.name == archive) {
+        Some(i) if nodes[i].kind == Kind::Folder => {}
+        Some(i) => nodes[i] = folder,
+        None => nodes.push(folder),
+    }
+    assign_ids(&mut nodes, "");
+    save(root, &nodes)?;
+
+    let from = split_id(id).0.unwrap_or("").to_string();
+    let mut nodes = move_node(root, id, Some(&archive), DropPos::Inside)?;
+    if let Some(node) = find_mut(&mut nodes, &format!("{archive}/{name}")) {
+        node.archived_from = Some(from);
+        // Arquivar o projeto aberto o fecha no canvas.
+        node.active = false;
+        clear_active(&mut node.children);
+    }
+    save(root, &nodes)?;
+    Ok(nodes)
+}
+
+/// Tira o item dos arquivados e o devolve à pasta de onde saiu (ou à raiz, se ela não existir mais).
+pub fn unarchive(root: &Path, id: &str) -> Res<Vec<Node>> {
+    let nodes = load(root)?;
+    let archive = archive_name(&nodes);
+    if split_id(id).0 != Some(archive.as_str()) {
+        return Err("O item não está arquivado.".into());
+    }
+    let node = find(&nodes, id).ok_or("Item não encontrado.")?;
+    let name = node.name.clone();
+    let target = node
+        .archived_from
+        .clone()
+        .filter(|p| !p.is_empty() && !in_archive(&archive, p))
+        .filter(|p| find(&nodes, p).is_some_and(|n| n.kind == Kind::Folder));
+
+    let mut nodes = move_node(root, id, target.as_deref(), DropPos::Inside)?;
+    let new_id = target.as_ref().map_or_else(|| name.clone(), |p| format!("{p}/{name}"));
+    if let Some(node) = find_mut(&mut nodes, &new_id) {
+        node.archived_from = None;
+    }
+    // Abre a pasta de destino para o item aparecer.
+    if let Some(folder) = target.as_deref().and_then(|p| find_mut(&mut nodes, p)) {
+        folder.expanded = true;
+    }
+    save(root, &nodes)?;
+    Ok(nodes)
+}
+
 /// Salva se a pasta está aberta ou fechada.
 pub fn set_expanded(root: &Path, id: &str, expanded: bool) -> Res<()> {
     let mut nodes = load(root)?;
@@ -614,6 +698,47 @@ mod tests {
     fn temp_root(tag: &str) -> PathBuf {
         let nanos = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
         std::env::temp_dir().join(format!("logstudio-test-{tag}-{nanos}"))
+    }
+
+    #[test]
+    fn archive_and_unarchive() {
+        let root = temp_root("archive");
+        let (_, folder) = create(&root, None, Kind::Folder).unwrap();
+        let (_, project) = create(&root, Some(&folder), Kind::Project).unwrap();
+        save_canvas(&root, &project, serde_json::json!([{ "id": "n1" }])).unwrap();
+        set_active(&root, Some(&project)).unwrap();
+
+        // Arquivar: vai para Arquivados com o canvas, guarda a origem e deixa de estar aberto.
+        let tree = archive(&root, &project).unwrap();
+        assert!(root.join(ARCHIVE_FOLDER).join("Novo projeto").is_dir());
+        assert!(!root.join("Nova pasta").join("Novo projeto").exists());
+        let arch = find(&tree, &format!("{ARCHIVE_FOLDER}/Novo projeto")).unwrap();
+        assert_eq!(arch.archived_from.as_deref(), Some("Nova pasta"));
+        assert!(!arch.active);
+        assert!(arch.canvas.is_some());
+        assert!(archive(&root, &arch.id).is_err(), "não arquiva de novo");
+
+        // Desarquivar: volta para a pasta de origem, sem a marca de arquivado.
+        let tree = unarchive(&root, &format!("{ARCHIVE_FOLDER}/Novo projeto")).unwrap();
+        let back = find(&tree, "Nova pasta/Novo projeto").unwrap();
+        assert!(back.archived_from.is_none());
+        assert!(back.canvas.is_some());
+        assert!(unarchive(&root, "Nova pasta/Novo projeto").is_err(), "só itens arquivados");
+
+        // Pasta de origem não existe mais → volta para a raiz.
+        archive(&root, "Nova pasta/Novo projeto").unwrap();
+        delete(&root, "Nova pasta").unwrap();
+        let tree = unarchive(&root, &format!("{ARCHIVE_FOLDER}/Novo projeto")).unwrap();
+        assert!(find(&tree, "Novo projeto").is_some());
+        assert!(root.join("Novo projeto").is_dir());
+
+        // Pastas também podem ser arquivadas (com o conteúdo).
+        let (_, f2) = create(&root, None, Kind::Folder).unwrap();
+        create(&root, Some(&f2), Kind::Project).unwrap();
+        archive(&root, &f2).unwrap();
+        assert!(root.join(ARCHIVE_FOLDER).join(&f2).join("Novo projeto").is_dir());
+
+        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]
