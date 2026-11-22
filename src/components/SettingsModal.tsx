@@ -133,6 +133,15 @@ function ProjectsRootSection({ onChanged }: { onChanged: () => void }) {
             <span className="st-path-text" title={root}>
               {root || "…"}
             </span>
+            <button
+              className="st-btn"
+              onClick={() => {
+                setError(null);
+                api.openProjectsRoot().catch((e) => setError(String(e)));
+              }}
+            >
+              Abrir
+            </button>
             <button className="st-btn" onClick={change}>
               Alterar…
             </button>
@@ -246,6 +255,9 @@ function BackupSection() {
             <span className="st-path-text" title={status?.dir}>
               {status?.dir || "…"}
             </span>
+            <button className="st-btn" onClick={() => guard(api.backupOpenDir)}>
+              Abrir
+            </button>
             <button className="st-btn" onClick={changeDir}>
               Alterar…
             </button>

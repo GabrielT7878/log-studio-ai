@@ -110,6 +110,10 @@ interface Created {
 }
 
 export const api = {
+  // Splash screen (abertura)
+  splashStatus: (text: string) => invoke<void>("splash_status", { text }),
+  splashDone: () => invoke<void>("splash_done"),
+
   // Configurações
   getSettings: () => invoke<Settings>("get_settings"),
   setProjectsRoot: (path: string) => invoke<Settings>("set_projects_root", { path }),
@@ -153,11 +157,16 @@ export const api = {
   rename: (space: string, id: string, name: string) =>
     invoke<TreeNode[]>("rename_node", { space, id, name }),
   remove: (space: string, id: string) => invoke<TreeNode[]>("delete_node", { space, id }),
+  archive: (space: string, id: string) => invoke<TreeNode[]>("archive_node", { space, id }),
+  unarchive: (space: string, id: string) => invoke<TreeNode[]>("unarchive_node", { space, id }),
   move: (space: string, dragId: string, targetId: string | null, pos: DropPos) =>
     invoke<TreeNode[]>("move_node", { space, dragId, targetId, pos }),
   setExpanded: (space: string, id: string, expanded: boolean) =>
     invoke<void>("set_expanded", { space, id, expanded }),
   openInExplorer: (space: string, id: string) => invoke<void>("open_in_explorer", { space, id }),
+  openInVscode: (space: string, id: string) => invoke<void>("open_in_vscode", { space, id }),
+  backupOpenDir: () => invoke<void>("backup_open_dir"),
+  openProjectsRoot: () => invoke<void>("open_projects_root"),
 
   // Projeto aberto no canvas e a sua visualização (posição/zoom)
   setActiveProject: (space: string, id: string | null) =>

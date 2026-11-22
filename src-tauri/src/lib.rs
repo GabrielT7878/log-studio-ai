@@ -400,6 +400,26 @@ fn delete_node(
     })
 }
 
+/// Arquiva o item (encerra antes os terminais abertos nele, senão o Windows não deixa mover).
+#[tauri::command(async)]
+fn archive_node(
+    state: State<'_, AppState>,
+    ptys: State<'_, PtyManager>,
+    bridge: State<'_, BridgeState>,
+    space: String,
+    id: String,
+) -> CmdResult<Vec<Node>> {
+    with_space(&state, &space, |dir| {
+        stop_terminals_under(&ptys, &bridge, &workspace::path_of(dir, &id)?);
+        workspace::archive(dir, &id)
+    })
+}
+
+#[tauri::command(async)]
+fn unarchive_node(state: State<'_, AppState>, space: String, id: String) -> CmdResult<Vec<Node>> {
+    with_space(&state, &space, |dir| workspace::unarchive(dir, &id))
+}
+
 #[tauri::command(async)]
 fn move_node(
     state: State<'_, AppState>,
@@ -607,6 +627,56 @@ fn open_in_explorer(app: AppHandle, state: State<'_, AppState>, space: String, i
     app.opener()
         .open_path(path.to_string_lossy().to_string(), None::<&str>)
         .map_err(|e| format!("Não foi possível abrir no Explorer: {e}"))
+}
+
+/// Cria a pasta (se ainda não existir) e a abre no Explorer.
+fn open_dir(app: &AppHandle, dir: &Path, what: &str) -> CmdResult<()> {
+    std::fs::create_dir_all(dir).map_err(|e| format!("Não foi possível abrir a pasta {what}: {e}"))?;
+    app.opener()
+        .open_path(dir.to_string_lossy().to_string(), None::<&str>)
+        .map_err(|e| format!("Não foi possível abrir a pasta {what}: {e}"))
+}
+
+/// Abre no Explorer a pasta dos backups configurada.
+#[tauri::command(async)]
+fn backup_open_dir(app: AppHandle, state: State<'_, AppState>) -> CmdResult<()> {
+    let dir = {
+        let s = state.settings.lock().map_err(|_| "Estado interno indisponível.".to_string())?;
+        settings::backup_dir(&app, &s)
+    };
+    open_dir(&app, &dir, "dos backups")
+}
+
+/// Abre no Explorer o diretório padrão dos projetos.
+#[tauri::command(async)]
+fn open_projects_root(app: AppHandle, state: State<'_, AppState>) -> CmdResult<()> {
+    let dir = {
+        let s = state.settings.lock().map_err(|_| "Estado interno indisponível.".to_string())?;
+        s.projects_root.clone()
+    };
+    open_dir(&app, &dir, "dos projetos")
+}
+
+/// URL `vscode://file/<caminho>` (barras normais; caracteres especiais em %XX).
+fn vscode_url(path: &Path) -> String {
+    let p = path.to_string_lossy().replace('\\', "/");
+    let mut out = String::from("vscode://file/");
+    for b in p.trim_start_matches('/').bytes() {
+        if b.is_ascii_alphanumeric() || b"-._~/:".contains(&b) {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
+}
+
+#[tauri::command(async)]
+fn open_in_vscode(app: AppHandle, state: State<'_, AppState>, space: String, id: String) -> CmdResult<()> {
+    let path = with_space(&state, &space, |dir| workspace::path_of(dir, &id))?;
+    app.opener()
+        .open_url(vscode_url(&path), None::<&str>)
+        .map_err(|e| format!("Não foi possível abrir no VS Code: {e}"))
 }
 
 // ---------------- Imagens do canvas ----------------
@@ -985,6 +1055,33 @@ fn agent_usage(agent: String) -> usage::Report {
     usage::report(&agent)
 }
 
+/// Tempo máximo da splash: se a interface não chamar `splash_done`, mostra o app assim mesmo.
+const SPLASH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+
+/// Fecha a splash e mostra a janela principal. Sem splash (ex.: build e2e), não faz nada.
+fn finish_splash(app: &AppHandle) {
+    let Some(splash) = app.get_webview_window("splash") else {
+        return;
+    };
+    if let Some(main) = app.get_webview_window("main") {
+        let _ = main.show();
+        let _ = main.set_focus();
+    }
+    let _ = splash.close();
+}
+
+/// Texto de status mostrado na splash enquanto o app carrega.
+#[tauri::command]
+fn splash_status(app: AppHandle, text: String) {
+    let _ = app.emit_to("splash", "splash-status", text);
+}
+
+/// A interface terminou de carregar: fecha a splash e mostra a janela principal.
+#[tauri::command]
+fn splash_done(app: AppHandle) {
+    finish_splash(&app);
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -1008,6 +1105,11 @@ pub fn run() {
             app.manage(BridgeState(bridge));
             let sites = LocalSites::start().map_err(|e| eprintln!("{e}")).ok();
             app.manage(LocalSitesState(sites));
+            let handle = app.handle().clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(SPLASH_TIMEOUT);
+                finish_splash(&handle);
+            });
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -1038,6 +1140,8 @@ pub fn run() {
             create_project,
             rename_node,
             delete_node,
+            archive_node,
+            unarchive_node,
             move_node,
             set_expanded,
             set_active_project,
@@ -1050,6 +1154,9 @@ pub fn run() {
             pty_kill,
             pty_kill_all,
             open_in_explorer,
+            open_in_vscode,
+            backup_open_dir,
+            open_projects_root,
             agent_reply,
             board_load,
             board_save,
@@ -1082,6 +1189,8 @@ pub fn run() {
             reveal_attachment,
             delete_attachment,
             agent_usage,
+            splash_status,
+            splash_done,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
@@ -1103,6 +1212,15 @@ mod tests {
         assert_eq!(super::percent_decode("Espa%C3%A7o%20A").as_deref(), Some("Espaço A"));
         assert_eq!(super::percent_decode("a%2Fb").as_deref(), Some("a/b"));
         assert_eq!(super::percent_decode("%ZZ"), None);
+    }
+
+    #[test]
+    fn builds_vscode_url() {
+        let p = std::path::Path::new(r"C:\Users\Eu\LogStudio\Projetos\Espaço A\P&D 100%");
+        assert_eq!(
+            super::vscode_url(p),
+            "vscode://file/C:/Users/Eu/LogStudio/Projetos/Espa%C3%A7o%20A/P%26D%20100%25"
+        );
     }
 
     #[test]
